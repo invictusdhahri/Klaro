@@ -13,6 +13,26 @@ export interface MLScoreResult {
   recommendations: string[];
 }
 
+export interface OcrExtractedFields {
+  full_name: string | null;
+  full_name_latin: string | null;
+  cin_number: string | null;
+  date_of_birth: string | null;
+  expiry_date: string | null;
+  address: string | null;
+  gender: string | null;
+}
+
+export type OcrExtractResult =
+  | {
+      success: true;
+      extracted: OcrExtractedFields;
+      face_crop_base64: string;
+      confidence: number;
+      quality_score: number;
+    }
+  | { success: false; reason: 'low_quality' | 'no_face_detected' };
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${env.ML_BASE_URL}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
@@ -25,11 +45,26 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function callMultipart<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${env.ML_BASE_URL}${path}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    throw new Error(`ML call failed (${res.status}): ${await res.text()}`);
+  }
+  return (await res.json()) as T;
+}
+
 export const ml = {
   health: () => call<{ status: string }>('/health'),
   score: (input: MLScoreInput) => call<MLScoreResult>('/score', input),
-  ocrExtract: (storagePath: string) =>
-    call<{ fields: Record<string, string> }>('/ocr/extract', { storagePath }),
+  ocrExtract: (imageBuffer: Buffer, mimeType: string, documentType: string) => {
+    const form = new FormData();
+    form.append('image', new Blob([imageBuffer], { type: mimeType }), 'document');
+    form.append('document_type', documentType);
+    return callMultipart<OcrExtractResult>('/ocr/extract', form);
+  },
   livenessCheck: (storagePath: string) =>
     call<{ passed: boolean; confidence: number }>('/kyc/liveness', { storagePath }),
 };

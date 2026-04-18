@@ -1,7 +1,13 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+'use client';
+
+import * as React from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { IdUploadStep } from '@/components/kyc/id-upload-step';
 
 export default function KycPage() {
+  const [step1Done, setStep1Done] = React.useState(false);
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -18,22 +24,24 @@ export default function KycPage() {
           <CardDescription>CIN, passport, or driver license</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button>Upload document</Button>
+          <IdUploadStep onSuccess={() => setStep1Done(true)} />
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className={step1Done ? undefined : 'opacity-50'}>
         <CardHeader>
           <CardTitle>Step 2 — Take a selfie</CardTitle>
           <CardDescription>Live liveness check (blink + head rotation)</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Button variant="outline" disabled>
+        <CardContent className="space-y-2">
+          <Button variant="outline" disabled={!step1Done}>
             Start camera
           </Button>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Camera flow will be wired once the ML sidecar is connected.
-          </p>
+          {!step1Done && (
+            <p className="text-xs text-muted-foreground">
+              Complete Step 1 first to unlock the liveness check.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
