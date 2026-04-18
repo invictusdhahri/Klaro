@@ -1,0 +1,46 @@
+# Local dev orchestration. Supabase runs separately via `supabase start`.
+# Use this to spin up the API + ML sidecar without polluting your local Node setup.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    container_name: klaro-api
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      ML_BASE_URL: http://ml:8000
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      ml:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ml:
+    build:
+      context: .
+      dockerfile: infra/docker/ml.Dockerfile
+    container_name: klaro-ml
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      ML_ENV: development
+      ML_PORT: 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+networks:
+  default:
+    name: klaro-net

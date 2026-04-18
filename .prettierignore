@@ -1,0 +1,14 @@
+node_modules
+.next
+.turbo
+dist
+build
+out
+coverage
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+**/.venv
+**/__pycache__
+supabase/.branches
+supabase/.temp

@@ -1,0 +1,15 @@
+{
+  "name": "@klaro/ml",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "uv run uvicorn klaro_ml.main:app --reload --host 0.0.0.0 --port 8000",
+    "start": "uv run uvicorn klaro_ml.main:app --host 0.0.0.0 --port 8000",
+    "lint": "uv run ruff check src tests",
+    "format": "uv run ruff format src tests",
+    "typecheck": "uv run mypy src",
+    "test": "uv run pytest",
+    "build": "echo 'no build step (Python)'",
+    "clean": "rm -rf .ruff_cache .pytest_cache .mypy_cache"
+  }
+}
