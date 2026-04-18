@@ -33,6 +33,27 @@ export type OcrExtractResult =
     }
   | { success: false; reason: 'low_quality' | 'no_face_detected' };
 
+export interface ClientLivenessSignals {
+  blink_detected: boolean;
+  yaw_right_reached: boolean;
+  yaw_left_reached: boolean;
+  pitch_up_reached: boolean;
+  max_yaw_deg: number;
+}
+
+export interface LivenessResult {
+  passed: boolean;
+  confidence: number;
+  blink: boolean;
+  head_rotation: boolean;
+}
+
+export interface FaceMatchResult {
+  match: boolean;
+  similarity: number;
+  threshold: number;
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${env.ML_BASE_URL}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
@@ -65,6 +86,8 @@ export const ml = {
     form.append('document_type', documentType);
     return callMultipart<OcrExtractResult>('/ocr/extract', form);
   },
-  livenessCheck: (storagePath: string) =>
-    call<{ passed: boolean; confidence: number }>('/kyc/liveness', { storagePath }),
+  verifyLiveness: (frames: string[], clientSignals?: ClientLivenessSignals) =>
+    call<LivenessResult>('/kyc/liveness', { frames, client_signals: clientSignals }),
+  faceMatch: (selfie_base64: string, doc_face_base64: string) =>
+    call<FaceMatchResult>('/kyc/face-match', { selfie_base64, doc_face_base64 }),
 };

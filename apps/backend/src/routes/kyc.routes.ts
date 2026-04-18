@@ -46,7 +46,53 @@ kycRouter.post('/upload', upload.single('image'), async (req, res, next) => {
   }
 });
 
+kycRouter.post('/verify-liveness', async (req, res, next) => {
+  try {
+    const { frames, client_signals } = req.body as {
+      frames?: string[];
+      client_signals?: {
+        blink_detected?: boolean;
+        yaw_right_reached?: boolean;
+        yaw_left_reached?: boolean;
+        pitch_up_reached?: boolean;
+        max_yaw_deg?: number;
+      };
+    };
+    if (!Array.isArray(frames) || frames.length === 0) {
+      throw new HttpError(400, 'missing_frames', 'frames must be a non-empty array of base64 strings.');
+    }
+    const signals = client_signals
+      ? {
+          blink_detected: !!client_signals.blink_detected,
+          yaw_right_reached: !!client_signals.yaw_right_reached,
+          yaw_left_reached: !!client_signals.yaw_left_reached,
+          pitch_up_reached: !!client_signals.pitch_up_reached,
+          max_yaw_deg: Number(client_signals.max_yaw_deg ?? 0),
+        }
+      : undefined;
+    const result = await ml.verifyLiveness(frames, signals);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+kycRouter.post('/face-match', async (req, res, next) => {
+  try {
+    const { selfie_base64, doc_face_base64 } = req.body as {
+      selfie_base64?: string;
+      doc_face_base64?: string;
+    };
+    if (!selfie_base64 || !doc_face_base64) {
+      throw new HttpError(400, 'missing_images', 'selfie_base64 and doc_face_base64 are required.');
+    }
+    const result = await ml.faceMatch(selfie_base64, doc_face_base64);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 kycRouter.post('/verify', validate(kycVerifyRequestSchema), (_req, res) => {
-  // TODO: call ML /kyc/verify (face match + liveness)
   res.status(202).json({ accepted: true });
 });

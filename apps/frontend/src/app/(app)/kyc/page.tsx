@@ -1,12 +1,24 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { IdUploadStep } from '@/components/kyc/id-upload-step';
 
+const KYC_FACE_CROP_KEY = 'klaro.kyc.face_crop';
+
 export default function KycPage() {
+  const router = useRouter();
   const [step1Done, setStep1Done] = React.useState(false);
+
+  const handleStep1Success = React.useCallback(
+    (result: { face_crop_base64: string }) => {
+      sessionStorage.setItem(KYC_FACE_CROP_KEY, result.face_crop_base64);
+      setStep1Done(true);
+    },
+    [],
+  );
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -24,18 +36,22 @@ export default function KycPage() {
           <CardDescription>CIN, passport, or driver license</CardDescription>
         </CardHeader>
         <CardContent>
-          <IdUploadStep onSuccess={() => setStep1Done(true)} />
+          <IdUploadStep onSuccess={handleStep1Success} />
         </CardContent>
       </Card>
 
-      <Card className={step1Done ? undefined : 'opacity-50'}>
+      <Card className={step1Done ? undefined : 'opacity-50 pointer-events-none'}>
         <CardHeader>
-          <CardTitle>Step 2 — Take a selfie</CardTitle>
-          <CardDescription>Live liveness check (blink + head rotation)</CardDescription>
+          <CardTitle>Step 2 — Liveness check</CardTitle>
+          <CardDescription>Live blink + head rotation — takes about 5 seconds</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
-          <Button variant="outline" disabled={!step1Done}>
-            Start camera
+          <Button
+            variant="outline"
+            disabled={!step1Done}
+            onClick={() => router.push('/kyc/liveness')}
+          >
+            Start liveness check
           </Button>
           {!step1Done && (
             <p className="text-xs text-muted-foreground">
