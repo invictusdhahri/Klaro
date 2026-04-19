@@ -39,6 +39,8 @@ export const API_ENDPOINTS = {
   bank: {
     clients: '/api/bank/clients',
     client: (id: string) => `/api/bank/clients/${id}`,
+    clientScore: (id: string) => `/api/bank/clients/${id}/score`,
+    requestConsent: (id: string) => `/api/bank/clients/${id}/request-consent`,
     consent: '/api/bank/consent',
   },
 
