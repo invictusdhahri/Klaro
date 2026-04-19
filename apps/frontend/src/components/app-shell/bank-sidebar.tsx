@@ -3,12 +3,36 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Users } from 'lucide-react';
+import {
+  BookOpen,
+  KeyRound,
+  LayoutDashboard,
+  Settings,
+  Users,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@klaro/ui/cn';
 
-const items = [
+type Item = {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  /** When true, only an exact pathname match is active (e.g. /bank vs /bank/clients). */
+  exact?: boolean;
+};
+
+const items: Item[] = [
+  { href: '/bank', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { href: '/bank/clients', icon: Users, label: 'Clients' },
+  { href: '/bank/api', icon: KeyRound, label: 'API keys', exact: true },
+  { href: '/bank/api/docs', icon: BookOpen, label: 'API docs' },
+  { href: '/bank/settings', icon: Settings, label: 'Settings' },
 ];
+
+function navActive(pathname: string, item: Item) {
+  if (item.exact) return pathname === item.href;
+  return pathname === item.href || pathname.startsWith(item.href + '/');
+}
 
 export function BankSidebar() {
   const pathname = usePathname();
@@ -17,7 +41,7 @@ export function BankSidebar() {
     <aside className="hidden lg:flex lg:flex-col w-60 shrink-0 fixed inset-y-0 left-0 z-40 hairline-r bg-[hsl(var(--marketing-bg))]/85 backdrop-blur-md">
       <div className="flex h-14 items-center px-5 hairline-b">
         <Link
-          href="/bank/clients"
+          href="/bank"
           className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight text-white"
         >
           <span
@@ -44,8 +68,7 @@ export function BankSidebar() {
 
       <nav className="flex-1 p-2 space-y-0.5">
         {items.map((item) => {
-          const active =
-            pathname === item.href || pathname.startsWith(item.href + '/');
+          const active = navActive(pathname, item);
           const Icon = item.icon;
           return (
             <Link
