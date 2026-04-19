@@ -48,6 +48,7 @@
   "devDependencies": {
     "@klaro/eslint-config": "workspace:*",
     "@klaro/tsconfig": "workspace:*",
+    "@playwright/test": "^1.59.1",
     "@types/node": "^20.14.10",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",

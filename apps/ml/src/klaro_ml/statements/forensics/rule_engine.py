@@ -33,7 +33,7 @@ SEVERITY_WEIGHTS: dict[str, float] = {
 SOURCE_MULTIPLIERS: dict[str, float] = {
     "pdf_structure": 1.10,
     "image_forensics": 1.00,
-    "vision_ensemble": 0.85,
+    "vision_ensemble": 0.55,
 }
 
 # Signal types that force-fail the layer regardless of score.
@@ -44,11 +44,11 @@ HARD_FAIL_TYPES: frozenset[str] = frozenset({
 
 # Hard-fail score gate — anything above this is rejected even without a
 # critical-severity flag.
-HARD_FAIL_SCORE = 0.70
+HARD_FAIL_SCORE = 0.78
 
 # Minimum score that flips the layer to a soft fail (used by the reasoner to
 # route to needs_review rather than instant rejection).
-SOFT_FAIL_SCORE = 0.45
+SOFT_FAIL_SCORE = 0.52
 
 
 def combine(

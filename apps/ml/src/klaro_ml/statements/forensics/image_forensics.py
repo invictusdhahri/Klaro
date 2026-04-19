@@ -28,7 +28,9 @@ from typing import Any
 ELA_HOTSPOT_RATIO_HIGH = 0.04   # >4% of pixels with extreme delta → high
 ELA_HOTSPOT_RATIO_MED = 0.015   # >1.5% → medium
 FFT_HF_FLOOR_LOW = 0.02         # high-freq energy share < 2% → suspicious
-NOISE_CV_HIGH = 1.4             # coefficient of variation across blocks
+# Bank PDF rasterisation and mixed compression can exceed 1.4 on legitimate exports;
+# 1.55 reduces false positives while still catching strong composites.
+NOISE_CV_HIGH = 1.55            # coefficient of variation across blocks
 
 
 def analyse_image(file_bytes: bytes, mime_type: str) -> list[dict[str, Any]]:

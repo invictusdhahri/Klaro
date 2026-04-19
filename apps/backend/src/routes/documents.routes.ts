@@ -3,13 +3,8 @@ import multer from 'multer';
 import type { Json } from '@klaro/shared';
 import { requireAuth } from '../middleware/auth';
 import { supabaseAdmin } from '../services/supabase';
-import {
-  ml,
-  type ClarificationAnswer,
-  type StatementProcessResult,
-  type UserContext,
-} from '../services/ml.client';
-import { uploadAndProcessStatement } from '../services/statement.service';
+import { ml, type ClarificationAnswer, type StatementProcessResult } from '../services/ml.client';
+import { buildUserContext, uploadAndProcessStatement } from '../services/statement.service';
 import { logger } from '../lib/logger';
 import { audit } from '../services/audit.service';
 
@@ -68,6 +63,42 @@ documentsRouter.get('/', async (req, res) => {
   }
 
   return res.json({ data: data ?? [] });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/documents/:id/file — short-lived signed URL to open the uploaded file
+// ---------------------------------------------------------------------------
+
+documentsRouter.get('/:id/file', async (req, res) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { data: row, error } = await supabaseAdmin
+    .from('bank_statements')
+    .select('storage_path, mime_type, file_name')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !row) {
+    return res.status(404).json({ error: 'Document not found' });
+  }
+
+  const { data: signed, error: signErr } = await supabaseAdmin.storage
+    .from('bank-statements')
+    .createSignedUrl(row.storage_path, 3600);
+
+  if (signErr || !signed?.signedUrl) {
+    logger.error({ err: signErr, userId, id }, 'bank-statements signed URL failed');
+    return res.status(500).json({ error: 'Could not generate file link' });
+  }
+
+  return res.json({
+    url: signed.signedUrl,
+    file_name: row.file_name,
+    mime_type: row.mime_type,
+    expires_in: 3600,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -139,54 +170,6 @@ documentsRouter.delete('/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Background pipeline runner
-// ---------------------------------------------------------------------------
-
-async function buildUserContext(userId: string, statementId: string): Promise<UserContext> {
-  const [profileRes, kycRes, priorStatementsRes] = await Promise.all([
-    supabaseAdmin
-      .from('profiles')
-      .select('full_name, occupation, occupation_category, education_level, date_of_birth, kyc_status, location_governorate, location_country, profile_context')
-      .eq('id', userId)
-      .single(),
-    supabaseAdmin
-      .from('kyc_documents')
-      .select('document_type, verification_status')
-      .eq('user_id', userId),
-    supabaseAdmin
-      .from('bank_statements')
-      .select('file_name, created_at')
-      .eq('user_id', userId)
-      .eq('status', 'processed')
-      .neq('id', statementId),
-  ]);
-
-  const profile = profileRes.data as Record<string, unknown> | null;
-  const dob = (profile?.date_of_birth as string | null | undefined) ?? null;
-  const age = dob ? computeAge(dob) : null;
-
-  return {
-    fullName: (profile?.full_name as string | undefined) ?? '',
-    occupation: (profile?.occupation as string | null | undefined) ?? null,
-    occupationCategory: (profile?.occupation_category as string | null | undefined) ?? null,
-    educationLevel: (profile?.education_level as string | null | undefined) ?? null,
-    age,
-    kycStatus: (profile?.kyc_status as string | undefined) ?? 'pending',
-    locationGovernorate: (profile?.location_governorate as string | null | undefined) ?? null,
-    locationCountry: (profile?.location_country as string | null | undefined) ?? 'TN',
-    kycDocuments: (kycRes.data ?? []).map((d) => ({
-      type: d.document_type,
-      status: d.verification_status,
-    })),
-    priorStatements: (priorStatementsRes.data ?? []).map((s) => ({
-      fileName: s.file_name,
-      uploadedAt: s.created_at,
-    })),
-    profileContext: (profile?.profile_context as Record<string, unknown>) ?? {},
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Profile enrichment — persist clarification answers as durable context
 // ---------------------------------------------------------------------------
 
@@ -240,124 +223,6 @@ async function enrichProfileFromAnswers(
     .from('profiles')
     .update({ profile_context: contextUpdates as import('@klaro/shared').Json, ...profileFieldUpdates })
     .eq('id', userId);
-}
-
-async function persistResult(
-  userId: string,
-  statementId: string,
-  result: StatementProcessResult,
-): Promise<void> {
-  const { extraction, verification, anomalies, reasoning } = result;
-  const verdict = reasoning?.verdict ?? (verification.passed ? 'approved' : 'rejected');
-
-  // Persist all flags into the user-level anomaly_flags table for audit
-  const allFlags = [
-    ...(verification.layers.consistency?.flags ?? []),
-    ...(verification.layers.income_plausibility?.flags ?? []),
-    ...(anomalies.signals ?? []),
-  ];
-
-  if (allFlags.length > 0) {
-    await supabaseAdmin.from('anomaly_flags').insert(
-      allFlags.map((flag: { type: string; severity: string; detail: string; evidence?: unknown }) => ({
-        user_id: userId,
-        flag_type: flag.type,
-        severity: flag.severity,
-        description: flag.detail,
-        evidence: (flag.evidence ?? null) as Json | null,
-      })),
-    );
-  }
-
-  const baseUpdate = {
-    coherence_score: verification.layers.consistency?.coherence_score ?? null,
-    // Persist `extraction` inside the verification report so /answer can
-    // re-run the income + reasoner layers without re-downloading the file.
-    verification_report: { ...verification, extraction } as unknown as Json,
-    anomaly_report: anomalies as unknown as Json,
-    reasoning: reasoning as unknown as Json,
-    clarification_questions: (reasoning?.questions ?? []) as unknown as Json,
-    risk_score: reasoning?.risk_score ?? null,
-    income_assessment: (verification.layers.income_plausibility ?? {}) as unknown as Json,
-  };
-
-  if (verdict === 'approved') {
-    if (extraction.transactions.length > 0) {
-      // Guard: skip insert if transactions for this statement already exist
-      // (can happen if persistResult is called twice for the same statement).
-      const { count: existing } = await supabaseAdmin
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .eq('statement_id', statementId);
-
-      if (!existing || existing === 0) {
-        await supabaseAdmin.from('transactions').insert(
-          extraction.transactions.map((tx) => ({
-            user_id: userId,
-            statement_id: statementId,
-            transaction_date: tx.date,
-            amount: tx.amount,
-            currency: 'TND',
-            transaction_type: tx.type,
-            category: tx.category ?? null,
-            description: tx.description,
-            source: 'ocr_extracted' as const,
-          })),
-        );
-      }
-    }
-
-    await supabaseAdmin
-      .from('bank_statements')
-      .update({
-        ...baseUpdate,
-        status: 'processed',
-        extracted_count: extraction.transactions.length,
-        error_message: null,
-      })
-      .eq('id', statementId);
-  } else if (verdict === 'needs_review') {
-    await supabaseAdmin
-      .from('bank_statements')
-      .update({
-        ...baseUpdate,
-        status: 'needs_review',
-        error_message: null,
-      })
-      .eq('id', statementId);
-  } else {
-    await supabaseAdmin
-      .from('bank_statements')
-      .update({
-        ...baseUpdate,
-        status: 'verification_failed',
-        error_message: `Verification rejected at layer: ${verification.failed_layer ?? 'reasoner'}`,
-      })
-      .eq('id', statementId);
-  }
-}
-
-async function runPipeline(
-  userId: string,
-  statementId: string,
-  storagePath: string,
-  mimeType: string,
-  fileBuffer: Buffer,
-): Promise<void> {
-  try {
-    const userContext = await buildUserContext(userId, statementId);
-    const result = await ml.statementProcess(storagePath, mimeType, userContext, fileBuffer);
-    await persistResult(userId, statementId, result);
-  } catch (err) {
-    logger.error({ err, userId, statementId }, 'statement pipeline failed');
-    await supabaseAdmin
-      .from('bank_statements')
-      .update({
-        status: 'failed',
-        error_message: err instanceof Error ? err.message : 'Unexpected error',
-      })
-      .eq('id', statementId);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -544,35 +409,3 @@ documentsRouter.post('/:id/answer', async (req, res) => {
     return res.status(500).json({ error: 'Reanalyze failed' });
   }
 });
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function computeAge(dob: string): number | null {
-  const d = new Date(dob);
-  if (Number.isNaN(d.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) {
-    age -= 1;
-  }
-  return age;
-}
-
-function mimeToExt(mime: string): string {
-  const map: Record<string, string> = {
-    'image/jpeg': 'jpg',
-    'image/jpg': 'jpg',
-    'image/png': 'png',
-    'image/webp': 'webp',
-    'image/gif': 'gif',
-    'image/tiff': 'tiff',
-    'application/pdf': 'pdf',
-    'text/csv': 'csv',
-    'application/vnd.ms-excel': 'xls',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-  };
-  return map[mime] ?? 'bin';
-}

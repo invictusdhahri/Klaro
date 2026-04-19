@@ -54,22 +54,22 @@ LAYER_WEIGHTS: dict[str, float] = {
 # Capped per call so a torrent of "low" flags can't push score over 1.0.
 SEVERITY_RISK: dict[str, float] = {
     "low":      0.02,
-    "medium":   0.05,
-    "high":     0.10,
+    "medium":   0.04,
+    "high":     0.09,
     "critical": 0.20,
 }
 MAX_FLAG_RISK_BUMP = 0.45
 
 # Special bonuses / penalties documented in the plan
-PENALTY_VISION_DISAGREEMENT = 0.10  # vision ensemble disagreed across pages
+PENALTY_VISION_DISAGREEMENT = 0.05  # vision ensemble disagreed across pages
 PENALTY_INCOME_STATUS_MISMATCH = 0.12  # student/unemployed earning a lot, no answer
 PENALTY_OCCUPATION_UNVERIFIABLE = 0.05
 BONUS_CLARIFIED_QUESTION = -0.10        # user cleared a borderline question
 BONUS_REMOTE_MATCH_CONFIRMED = -0.08    # remote band fits AND user confirmed remote
 
-# Verdict thresholds
-THRESHOLD_REJECT = 0.60
-THRESHOLD_REVIEW = 0.25
+# Verdict thresholds (slightly lenient to reduce false rejections on borderline scans)
+THRESHOLD_REJECT = 0.66
+THRESHOLD_REVIEW = 0.28
 
 # Maximum the LLM may move the rubric score in either direction.
 LLM_RISK_CLAMP = 0.10
@@ -138,6 +138,10 @@ def reason(
     if verdict == "needs_review" and not questions:
         verdict = "approved"
 
+    # Prefer clarification (income / profile gaps) over hard rejection when we can ask something.
+    if verdict == "rejected" and questions and not rubric["has_critical_flag"]:
+        verdict = "needs_review"
+
     summary = (
         llm_output.get("reasoning_summary")
         or _fallback_summary(rubric, final_risk, verdict)
@@ -191,10 +195,8 @@ def compute_rubric_score(
     penalty = 0.0
 
     deepfake = layers.get("deepfake") or {}
-    if any(
-        s.get("type") == "vision_model_disagreement" or s.get("type") == "vision_majority_flagged"
-        for s in deepfake.get("signals", [])
-    ):
+    # Only disagreement across models is a risk bump; majority-page is informational.
+    if any(s.get("type") == "vision_model_disagreement" for s in deepfake.get("signals", [])):
         penalty += PENALTY_VISION_DISAGREEMENT
 
     income = layers.get("income_plausibility") or {}

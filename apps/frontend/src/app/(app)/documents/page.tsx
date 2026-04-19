@@ -741,6 +741,26 @@ function StatementCard({
   onReload: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [openingFile, setOpeningFile] = useState(false);
+
+  async function openUploadedFile() {
+    setOpeningFile(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await fetch(
+        `${env.NEXT_PUBLIC_API_BASE_URL}${API_ENDPOINTS.documents.file(stmt.id)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) return;
+      const body = (await res.json()) as { url?: string };
+      if (body.url) {
+        window.open(body.url, '_blank', 'noopener,noreferrer');
+      }
+    } finally {
+      setOpeningFile(false);
+    }
+  }
 
   const layers = stmt.verification_report?.layers;
   const reasoning = stmt.reasoning ?? null;
@@ -920,7 +940,15 @@ function StatementCard({
       )}
 
       {/* Action row */}
-      <div className="flex gap-2 pt-1">
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={openingFile}
+          onClick={() => void openUploadedFile()}
+        >
+          {openingFile ? 'Opening…' : 'View file'}
+        </Button>
         {stmt.status === 'verification_failed' && (
           <Button size="sm" variant="outline" onClick={onReupload}>
             Re-upload

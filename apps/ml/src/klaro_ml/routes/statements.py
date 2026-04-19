@@ -210,7 +210,7 @@ async def process_statement(req: StatementProcessRequest) -> StatementProcessRes
     return StatementProcessResponse(
         extraction={"transactions": transactions},
         verification={
-            "passed": verdict == "approved",
+            "passed": verdict in ("approved", "needs_review"),
             "verdict": verdict,
             "failed_layer": None,
             "layers": layers,
@@ -249,7 +249,7 @@ async def reanalyze_statement(req: StatementReanalyzeRequest) -> StatementProces
     return StatementProcessResponse(
         extraction={"transactions": req.transactions},
         verification={
-            "passed": verdict == "approved",
+            "passed": verdict in ("approved", "needs_review"),
             "verdict": verdict,
             "failed_layer": None,
             "layers": layers,

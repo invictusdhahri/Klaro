@@ -36,6 +36,11 @@ balance check result. Check the following authenticity rules:
 6. Structural regularity: Consistent format throughout (same columns, same field ordering).
 7. Round-trip plausibility: At least one credit and one debit over the statement period.
 
+IMPORTANT — Tunisian e-banking PDFs (UBCI, UBANK, etc.):
+- "Solde début de période" / "Solde actuel" are valid opening/closing labels.
+- Value date vs operation date ordering differs by bank — NOT proof of forgery.
+- Default passed=true when rule 3 is PASS or CANNOT VERIFY and there is no obvious fake template.
+
 Return ONLY valid JSON:
 {
   "passed": <true if document passes all critical checks>,
@@ -89,14 +94,39 @@ PRE-COMPUTED BALANCE CHECK (rule 3 — authoritative, do not override):
 
     try:
         result: dict[str, Any] = json.loads(raw)
-        # If our programmatic check passed, never let the LLM override rule 3 as failed.
-        if "PASS" in balance_note and result.get("failed_rules"):
-            result["failed_rules"] = [r for r in result["failed_rules"] if "balance" not in r.lower() and "arithmetic" not in r.lower()]
-            if not result["failed_rules"]:
-                result["passed"] = True
-        return result
+        return _normalize_authenticity_result(result, balance_note)
     except (json.JSONDecodeError, AttributeError):
         return {"passed": True, "score": 0.5, "failed_rules": ["Parse error — check skipped"]}
+
+
+def _normalize_authenticity_result(
+    result: dict[str, Any],
+    balance_note: str,
+) -> dict[str, Any]:
+    """Align LLM output with programmatic balance: do not fail real e-banking PDFs on heuristics."""
+    out = dict(result)
+    fr = [str(x) for x in (out.get("failed_rules") or [])]
+
+    if "Result: FAIL" in balance_note:
+        out["passed"] = False
+        out["failed_rules"] = fr or ["balance_arithmetic_mismatch"]
+        out["score"] = min(float(out.get("score", 0.35) or 0.35), 0.45)
+        return out
+
+    # PASS or CANNOT VERIFY — trust structural extraction over LLM nitpicks
+    if "Result: PASS" in balance_note or "CANNOT VERIFY" in balance_note:
+        out["passed"] = True
+        out["failed_rules"] = []
+        out["score"] = max(float(out.get("score", 0.5) or 0.5), 0.88)
+        return out
+
+    # Unexpected note shape — strip balance overrides only
+    if fr:
+        fr = [r for r in fr if "balance" not in r.lower() and "arithmetic" not in r.lower()]
+        out["failed_rules"] = fr
+        if not fr:
+            out["passed"] = True
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -133,17 +163,57 @@ def _parse_french_number(s: str) -> float | None:
         return None
 
 
-def _extract_balance_from_text(text: str, *label_patterns: str) -> float | None:
-    """Find the first TND amount that follows any of the given label patterns."""
+def _extract_balance_amount_raw(text: str, *label_patterns: str) -> str | None:
+    """Capture the numeric token after a balance label (before TND)."""
     num_pat = r'([\d][\d\s\u00a0]*[,.][\d]+|[\d]+)'
     for pat in label_patterns:
         m = re.search(
-            pat + r'[\s\S]{0,40}?' + num_pat + r'\s*(?:TND)?',
-            text, re.IGNORECASE,
+            pat + r'[\s\S]{0,80}?' + num_pat + r'\s*(?:TND)?',
+            text,
+            re.IGNORECASE,
         )
         if m:
-            return _parse_french_number(m.group(m.lastindex or 1))
+            return m.group(m.lastindex or 1)
     return None
+
+
+def _balance_amount_candidates(raw: str) -> list[float]:
+    """Multiple interpretations for UBCI-style amounts (338,777 vs 338.777, 1700,000 vs 1.7M)."""
+    raw = raw.strip()
+    if not raw:
+        return []
+    compact = re.sub(r'[\s\u00a0]', '', raw)
+    out: list[float] = []
+
+    p = _parse_french_number(compact)
+    if p is not None:
+        out.append(p)
+
+    # US-style grouped: 1,234,567
+    if re.fullmatch(r"\d{1,3}(,\d{3})+", compact):
+        out.append(float(compact.replace(",", "")))
+
+    # Single comma + 3 digits: often thousands in e-banking exports (338,777 → 338777)
+    if compact.count(",") == 1 and "." not in compact:
+        left, right = compact.split(",")
+        if left.isdigit() and right.isdigit() and len(right) == 3:
+            merged = float(left + right)
+            if merged not in out:
+                out.append(merged)
+
+    if compact.isdigit():
+        v = float(compact)
+        if v not in out:
+            out.append(v)
+
+    # Dedupe preserving order
+    seen: set[float] = set()
+    uniq: list[float] = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
 
 
 def _programmatic_balance_check(
@@ -155,25 +225,28 @@ def _programmatic_balance_check(
     Returns a human-readable string that is injected into the LLM context.
     """
     total_credits = sum(t["amount"] for t in transactions if t.get("type") == "credit")
-    total_debits  = sum(t["amount"] for t in transactions if t.get("type") == "debit")
+    total_debits = sum(t["amount"] for t in transactions if t.get("type") == "debit")
 
-    opening = _extract_balance_from_text(
+    opening_raw = _extract_balance_amount_raw(
         extracted_text,
         r"solde\s+d.ouverture",
+        r"solde\s+d[ée]but\s+de\s+p[ée]riode",
+        r"solde\s+de\s+d[ée]but\s+de\s+p[ée]riode",
         r"opening\s+balance",
         r"solde\s+initial",
         r"balance\s+d.ouverture",
     )
-    closing = _extract_balance_from_text(
+    closing_raw = _extract_balance_amount_raw(
         extracted_text,
         r"solde\s+de\s+cl[oô]ture",
         r"solde\s+final",
+        r"solde\s+actuel",
         r"closing\s+balance",
         r"solde\s+cl[oô]ture",
         r"SOLDE\s+DE\s+CL",
     )
 
-    if opening is None or closing is None:
+    if opening_raw is None or closing_raw is None:
         return (
             f"Opening balance: not found in text | "
             f"Closing balance: not found in text | "
@@ -181,16 +254,43 @@ def _programmatic_balance_check(
             f"Result: CANNOT VERIFY (treat rule 3 as PASS — insufficient data)"
         )
 
-    expected_closing = opening + total_credits - total_debits
-    tolerance = max(abs(opening) * 0.005, 0.1)   # 0.5 % of opening or 0.1 TND minimum
-    ok = abs(expected_closing - closing) <= tolerance
+    o_cands = _balance_amount_candidates(opening_raw)
+    c_cands = _balance_amount_candidates(closing_raw)
+    if not o_cands or not c_cands:
+        return (
+            f"Opening raw: {opening_raw!r} | Closing raw: {closing_raw!r} | "
+            f"Credits: {total_credits:.3f} TND | Debits: {total_debits:.3f} TND | "
+            f"Result: CANNOT VERIFY (treat rule 3 as PASS — insufficient data)"
+        )
 
+    tolerance_base = 0.1
+
+    for opening in o_cands:
+        for closing in c_cands:
+            expected_closing = opening + total_credits - total_debits
+            tolerance = max(abs(opening) * 0.005, abs(closing) * 0.005, tolerance_base)
+            if abs(expected_closing - closing) <= tolerance:
+                return (
+                    f"Opening: {opening:.3f} TND (from {opening_raw!r}) | "
+                    f"Credits: {total_credits:.3f} TND | "
+                    f"Debits: {total_debits:.3f} TND | "
+                    f"Expected closing: {expected_closing:.3f} TND | "
+                    f"Stated closing: {closing:.3f} TND (from {closing_raw!r}) | "
+                    f"Difference: {abs(expected_closing - closing):.3f} TND | "
+                    f"Result: PASS"
+                )
+
+    # No candidate pair reconciled — report best-effort FAIL using first candidates
+    opening, closing = o_cands[0], c_cands[0]
+    expected_closing = opening + total_credits - total_debits
+    tolerance = max(abs(opening) * 0.005, abs(closing) * 0.005, tolerance_base)
+    ok = abs(expected_closing - closing) <= tolerance
     return (
-        f"Opening: {opening:.3f} TND | "
+        f"Opening: {opening:.3f} TND (from {opening_raw!r}) | "
         f"Credits: {total_credits:.3f} TND | "
         f"Debits: {total_debits:.3f} TND | "
         f"Expected closing: {expected_closing:.3f} TND | "
-        f"Stated closing: {closing:.3f} TND | "
+        f"Stated closing: {closing:.3f} TND (from {closing_raw!r}) | "
         f"Difference: {abs(expected_closing - closing):.3f} TND | "
         f"Result: {'PASS' if ok else 'FAIL'}"
     )

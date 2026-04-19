@@ -40,6 +40,7 @@ export const API_ENDPOINTS = {
   documents: {
     list: '/api/documents',
     upload: '/api/documents/upload',
+    file: (id: string) => `/api/documents/${id}/file`,
     delete: (id: string) => `/api/documents/${id}`,
     answer: (id: string) => `/api/documents/${id}/answer`,
   },
