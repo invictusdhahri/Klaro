@@ -2,6 +2,17 @@ export type ScoreBand = 'POOR' | 'FAIR' | 'GOOD' | 'VERY_GOOD' | 'EXCELLENT';
 
 export type RiskCategory = 'low' | 'medium' | 'high' | 'very_high';
 
+export type ScoreActionCategory = 'income' | 'payments' | 'debt' | 'documents' | 'behavior';
+
+export interface ScoreAction {
+  id: string;
+  title: string;
+  rationale: string;
+  category: ScoreActionCategory;
+  expectedImpactPoints: number;
+  impactConfidence: number;
+}
+
 export interface ScoreBreakdown {
   identity?: number;
   income?: number;
@@ -39,6 +50,7 @@ export interface CreditScore {
   featureImportance: Record<string, number>;
   flags: string[];
   recommendations: string[];
+  actions: ScoreAction[];
   dataGaps: string[];
   modelVersion: string;
   createdAt: string;

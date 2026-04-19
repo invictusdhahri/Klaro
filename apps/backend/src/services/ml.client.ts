@@ -1,5 +1,14 @@
 import { env } from '../config/env';
 
+export interface MLScoreAction {
+  id: string;
+  title: string;
+  rationale: string;
+  category: 'income' | 'payments' | 'debt' | 'documents' | 'behavior';
+  expectedImpactPoints: number;
+  impactConfidence: number;
+}
+
 export interface MLScoreInput {
   userId: string;
 }
@@ -9,10 +18,11 @@ export interface MLScoreResult {
   band: string;
   riskCategory: string;
   confidence: number;
-  breakdown: Record<string, number>;
+  breakdown: Record<string, unknown>;
   flags: string[];
   explanation: string;
   coachingTips: string[];
+  actions: MLScoreAction[];
   dataSufficiency: number;
   modelVersion: string;
 }
@@ -82,15 +92,26 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 }
 
 function mapScoreResponse(raw: Record<string, unknown>): MLScoreResult {
+  const rawActions = (raw.actions ?? []) as Array<Record<string, unknown>>;
+  const actions: MLScoreAction[] = rawActions.map((a) => ({
+    id: a.id as string,
+    title: a.title as string,
+    rationale: a.rationale as string,
+    category: a.category as MLScoreAction['category'],
+    expectedImpactPoints: a.expected_impact_points as number,
+    impactConfidence: a.impact_confidence as number,
+  }));
+
   return {
     score: raw.score as number,
     band: raw.band as string,
     riskCategory: raw.risk_category as string,
     confidence: raw.confidence as number,
-    breakdown: raw.breakdown as Record<string, number>,
+    breakdown: raw.breakdown as Record<string, unknown>,
     flags: (raw.flags ?? []) as string[],
     explanation: (raw.explanation ?? '') as string,
     coachingTips: (raw.coaching_tips ?? []) as string[],
+    actions,
     dataSufficiency: (raw.data_sufficiency ?? 1) as number,
     modelVersion: raw.model_version as string,
   };
@@ -133,10 +154,27 @@ export interface AnomalySignal {
   evidence?: Record<string, unknown>;
 }
 
+export interface ForensicSignal {
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  detail: string;
+  evidence?: Record<string, unknown>;
+  source?: string;
+}
+
 export interface LayerDeepfake {
   passed: boolean;
+  /** Composite forensic score 0-1 (1 = clean). */
+  score: number;
+  /** Composite forensic risk 0-1 (1 = clearly fake). */
+  risk_score: number;
   confidence: number;
-  signals: string[];
+  /** Rich typed signals from PDF structure / image forensics / vision ensemble. */
+  signals: ForensicSignal[];
+  reasoning?: string;
+  vision_pages_analysed?: number;
+  vision_available?: boolean;
+  soft_fail?: boolean;
 }
 
 export interface LayerAuthenticity {
@@ -152,13 +190,61 @@ export interface LayerConsistency {
   web_checks: Array<{ query: string; finding: string; passed: boolean }>;
 }
 
+export interface IncomeBand {
+  p25: number;
+  p50: number;
+  p75: number;
+  currency: string;
+  source: string;
+}
+
+export interface IncomeFlag {
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  detail: string;
+  evidence?: Record<string, unknown>;
+  source?: string;
+}
+
+export interface SuggestedQuestion {
+  id: string;
+  type: 'single_choice' | 'multi_choice' | 'free_text' | 'amount';
+  prompt: string;
+  options: string[];
+  linked_flag?: string;
+}
+
+export interface LayerIncomePlausibility {
+  passed: boolean;
+  implied_monthly_income: number;
+  local_band: IncomeBand;
+  remote_band: IncomeBand;
+  gap_local_pct: number;
+  gap_remote_pct: number;
+  primary_band: 'local' | 'remote';
+  foreign_currency_share: number;
+  flags: IncomeFlag[];
+  suggested_questions: SuggestedQuestion[];
+  reasoning: string;
+  applied_answers?: string[];
+}
+
 export interface StatementVerification {
   passed: boolean;
-  failed_layer: 'deepfake' | 'authenticity' | 'consistency' | null;
+  verdict?: 'approved' | 'needs_review' | 'rejected';
+  failed_layer:
+    | 'deepfake'
+    | 'authenticity'
+    | 'consistency'
+    | 'income_plausibility'
+    | 'reasoner'
+    | 'extraction'
+    | null;
   layers: {
     deepfake: LayerDeepfake;
     authenticity: LayerAuthenticity;
     consistency: LayerConsistency;
+    income_plausibility?: LayerIncomePlausibility;
   };
 }
 
@@ -168,19 +254,48 @@ export interface StatementAnomalies {
   signals: AnomalySignal[];
 }
 
+export interface PerFlagExplanation {
+  flag_type: string;
+  why_it_matters: string;
+  what_would_clear_it: string;
+}
+
+export interface StatementReasoning {
+  risk_score: number;
+  rubric_risk_score?: number;
+  rubric_breakdown?: Record<string, number>;
+  verdict: 'approved' | 'needs_review' | 'rejected';
+  reasoning_summary: string;
+  per_flag_explanations: PerFlagExplanation[];
+  questions: SuggestedQuestion[];
+  applied_answers?: string[];
+}
+
 export interface StatementProcessResult {
   extraction: { transactions: RawTransaction[] };
   verification: StatementVerification;
   anomalies: StatementAnomalies;
+  reasoning: StatementReasoning;
+}
+
+export interface ClarificationAnswer {
+  question_id: string;
+  value: unknown;
 }
 
 export interface UserContext {
   fullName: string;
+  occupation: string | null;
   occupationCategory: string | null;
+  educationLevel: string | null;
+  age: number | null;
   kycStatus: string;
   locationGovernorate: string | null;
+  locationCountry: string | null;
   kycDocuments: Array<{ type: string; status: string }>;
   priorStatements: Array<{ fileName: string; uploadedAt: string }>;
+  /** Enrichment signals accumulated from previous clarification rounds. */
+  profileContext: Record<string, unknown>;
 }
 
 async function callMultipart<T>(path: string, form: FormData): Promise<T> {
@@ -227,4 +342,11 @@ export const ml = {
       userContext,
       fileBytes: fileBuffer ? fileBuffer.toString('base64') : undefined,
     }),
+  statementReanalyze: (input: {
+    userContext: UserContext;
+    transactions: RawTransaction[];
+    layers: StatementVerification['layers'];
+    previousAnswers: ClarificationAnswer[];
+    newAnswers: ClarificationAnswer[];
+  }) => call<StatementProcessResult>('/statements/reanalyze', input),
 };
