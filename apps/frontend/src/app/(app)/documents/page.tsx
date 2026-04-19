@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { API_ENDPOINTS } from '@klaro/shared';
@@ -944,12 +945,17 @@ function StatementCard({
 // ---------------------------------------------------------------------------
 
 export default function DocumentsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const fromOnboarding = searchParams.get('from') === 'onboarding';
+
   const [statements, setStatements] = useState<BankStatement[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [justUploaded, setJustUploaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1030,6 +1036,7 @@ export default function DocumentsPage() {
         setUploadProgress(0);
         if (xhr.status === 202) {
           void fetchStatements();
+          setJustUploaded(true);
         } else if (xhr.status === 409) {
           setUploadError('This file has already been uploaded.');
         } else {
@@ -1089,13 +1096,41 @@ export default function DocumentsPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 max-w-2xl mx-auto">
+      {/* Onboarding context banner */}
+      {fromOnboarding && (
+        <div className="glass-card-strong p-4 flex items-center gap-3 border border-indigo-500/25">
+          <span className="text-2xl shrink-0">📄</span>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-white text-sm">Upload a document to unlock your score</p>
+            <p className="text-xs text-white/45">Bank statements, payslips, or income proof</p>
+          </div>
+        </div>
+      )}
+
+      {/* Post-upload continue CTA — shown when coming from onboarding and just uploaded */}
+      {fromOnboarding && justUploaded && (
+        <div className="glass-card-strong p-4 flex items-center gap-3 border border-green-500/25">
+          <span className="text-2xl shrink-0">✅</span>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-white text-sm">Document uploaded! Ready to see your score?</p>
+            <p className="text-xs text-white/45">Processing in the background — you can continue</p>
+          </div>
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="shrink-0 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white btn-glow transition-all"
+          >
+            Continue →
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
-        <p className="text-sm text-muted-foreground">
-          Upload bank statements, payslips, or transaction exports instead of connecting your bank.
-          Every file goes through a multi-layer security verification before transactions are imported.
+        <h1 className="text-xl font-bold text-white">Documents 📄</h1>
+        <p className="text-sm text-white/45 mt-0.5">
+          Upload bank statements, payslips, or transaction exports.
+          Every file goes through multi-layer verification 🔍
         </p>
       </div>
 

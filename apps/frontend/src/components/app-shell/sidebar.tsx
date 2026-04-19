@@ -2,48 +2,58 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, FileCheck2, Building2, Receipt, MessageCircle, FolderOpen } from 'lucide-react';
 import { cn } from '@klaro/ui/cn';
 
 const items = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/kyc', label: 'KYC', icon: FileCheck2 },
-  { href: '/connect-bank', label: 'Bank', icon: Building2 },
-  { href: '/transactions', label: 'Transactions', icon: Receipt },
-  { href: '/documents', label: 'Documents', icon: FolderOpen },
-  { href: '/chat', label: 'Advisor', icon: MessageCircle },
+  { href: '/dashboard',    emoji: '🏠', label: 'Dashboard' },
+  { href: '/kyc',          emoji: '🪪', label: 'KYC' },
+  { href: '/connect-bank', emoji: '🏦', label: 'Bank' },
+  { href: '/transactions', emoji: '💳', label: 'Transactions' },
+  { href: '/documents',    emoji: '📄', label: 'Documents' },
+  { href: '/chat',         emoji: '🤖', label: 'Advisor' },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   return (
-    <aside className="hidden w-60 shrink-0 border-r lg:block">
-      <div className="flex h-16 items-center border-b px-6">
-        <Link href="/dashboard" className="text-lg font-bold tracking-tight">
-          Klaro
-        </Link>
+    <aside className="hidden lg:flex lg:flex-col w-64 shrink-0 fixed inset-y-0 left-0 z-40 min-h-0 isolate">
+      <div className="glass-strong h-full min-h-0 border-r border-white/10 flex flex-col overflow-hidden">
+        {/* Logo */}
+        <div className="flex h-16 items-center px-6 border-b border-white/10">
+          <Link href="/dashboard" className="text-xl font-black tracking-tighter text-white hover:text-indigo-300 transition-colors">
+            Klaro
+          </Link>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 p-3 space-y-1">
+          {items.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
+                  active
+                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/20'
+                    : 'text-white/50 hover:bg-white/5 hover:text-white',
+                )}
+              >
+                <span className="text-lg leading-none">{item.emoji}</span>
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Bottom brand */}
+        <div className="p-4 border-t border-white/10">
+          <p className="text-[10px] text-white/20 text-center tracking-widest uppercase">
+            © {new Date().getFullYear()} Klaro
+          </p>
+        </div>
       </div>
-      <nav className="space-y-1 p-3">
-        {items.map((it) => {
-          const active = pathname === it.href || pathname.startsWith(it.href + '/');
-          const Icon = it.icon;
-          return (
-            <Link
-              key={it.href}
-              href={it.href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                active
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {it.label}
-            </Link>
-          );
-        })}
-      </nav>
     </aside>
   );
 }

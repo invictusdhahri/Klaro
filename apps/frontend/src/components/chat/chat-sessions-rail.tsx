@@ -28,11 +28,7 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-interface ChatSessionsRailProps {
-  // reserved for future use
-}
-
-export function ChatSessionsRail(_props: ChatSessionsRailProps = {}) {
+export function ChatSessionsRail(_props: Record<string, never> = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const [sessions, setSessions] = useState<Session[]>([]);

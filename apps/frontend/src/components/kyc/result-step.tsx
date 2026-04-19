@@ -101,8 +101,8 @@ function SuccessPanel({ similarity }: { similarity: number }) {
       {/* Divider */}
       <div className="w-full max-w-xs border-t" />
 
-      <Button onClick={() => router.push('/dashboard')} className="w-full max-w-xs">
-        Go to Dashboard
+      <Button onClick={() => router.push('/onboarding/connect')} className="w-full max-w-xs">
+        Continue 🎉
       </Button>
     </div>
   );
