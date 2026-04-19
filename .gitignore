@@ -1,4 +1,4 @@
-# Dependencies
+# Dependencies (never commit; pnpm may create per-app node_modules)
 node_modules/
 .pnpm-store/
 
