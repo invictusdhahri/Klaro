@@ -26,6 +26,13 @@ export const metadata: Metadata = {
   keywords: ['credit score', 'Tunisia', 'fintech', 'KYC', 'AI advisor'],
   authors: [{ name: 'Klaro' }],
   formatDetection: { telephone: false, email: false, address: false },
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/klaro-logo.png', type: 'image/png', sizes: '512x512' },
+    ],
+    apple: [{ url: '/klaro-logo.png', type: 'image/png', sizes: '512x512' }],
+  },
   openGraph: {
     title: 'Klaro — Alternative Credit Scoring',
     description: 'Your real financial story. Scored fairly. Explained clearly.',
