@@ -25,6 +25,15 @@ class ScoreRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class ScoreAction(BaseModel):
+    id: str
+    title: str
+    rationale: str
+    category: str
+    expected_impact_points: int
+    impact_confidence: float
+
+
 class ScoreResponse(BaseModel):
     score: int
     band: str
@@ -34,6 +43,7 @@ class ScoreResponse(BaseModel):
     flags: list[str]
     explanation: str
     coaching_tips: list[str]
+    actions: list[ScoreAction] = []
     data_sufficiency: float
     model_version: str
 
@@ -55,7 +65,11 @@ def _get_supabase() -> Any:
 
 
 def fetch_user_data(user_id: str) -> dict[str, Any]:
-    """Fetch all data needed for scoring from Supabase (read-only, service role)."""
+    """Fetch all data needed for scoring from Supabase (read-only, service role).
+
+    Loads core financial data plus enrichment signals: chat memories, profile
+    context, and statement reasoning — capped to keep prompt size bounded.
+    """
     sb = _get_supabase()
 
     transactions = (
@@ -86,7 +100,10 @@ def fetch_user_data(user_id: str) -> dict[str, Any]:
     )
     kyc_documents = (
         sb.table("kyc_documents")
-        .select("*")
+        .select(
+            "id, document_type, verification_status, consistency_score, authenticity_score, "
+            "deepfake_score, ocr_data, created_at"
+        )
         .eq("user_id", user_id)
         .execute()
         .data
@@ -94,13 +111,55 @@ def fetch_user_data(user_id: str) -> dict[str, Any]:
     )
     bank_statements = (
         sb.table("bank_statements")
-        .select("id, status, extracted_count, created_at")
+        .select("id, status, extracted_count, reasoning, created_at")
         .eq("user_id", user_id)
         .eq("status", "processed")
+        .order("created_at", desc=True)
+        .limit(5)
         .execute()
         .data
         or []
     )
+
+    # Enrichment: user memories (top 20 by importance, desc)
+    user_memories = (
+        sb.table("user_memories")
+        .select("fact, category, importance, created_at")
+        .eq("user_id", user_id)
+        .order("importance", desc=True)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+        .data
+        or []
+    )
+
+    # Enrichment: last 40 chat messages across all non-archived sessions
+    chat_sessions = (
+        sb.table("chat_sessions")
+        .select("id")
+        .eq("user_id", user_id)
+        .is_("archived_at", "null")
+        .order("updated_at", desc=True)
+        .limit(5)
+        .execute()
+        .data
+        or []
+    )
+    chat_messages: list[dict[str, Any]] = []
+    if chat_sessions:
+        session_ids = [s["id"] for s in chat_sessions]
+        chat_messages = (
+            sb.table("chat_messages")
+            .select("role, content, created_at, session_id")
+            .in_("session_id", session_ids)
+            .order("created_at", desc=True)
+            .limit(40)
+            .execute()
+            .data
+            or []
+        )
+        chat_messages = list(reversed(chat_messages))
 
     return {
         "user_id": user_id,
@@ -109,6 +168,8 @@ def fetch_user_data(user_id: str) -> dict[str, Any]:
         "bank_connections": bank_connections,
         "kyc_documents": kyc_documents,
         "bank_statements": bank_statements,
+        "user_memories": user_memories,
+        "chat_messages": chat_messages,
     }
 
 

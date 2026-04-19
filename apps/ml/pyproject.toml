@@ -33,11 +33,14 @@ kyc = [
 statements = [
     # PDF text extraction + page rendering (no system poppler needed)
     "pymupdf>=1.24.0",
+    # PDF content-stream / structural inspection for Layer 1 forensics
+    "pdfminer.six>=20240706",
     # CSV / Excel parsing
     "pandas>=2.2.0",
     "openpyxl>=3.1.0",
-    # Image byte utilities
+    # Image byte utilities + pixel-level forensics (ELA, FFT, noise)
     "pillow>=10.0.0",
+    "opencv-python-headless>=4.10.0",
     # Web search for Layer 3 consistency check (optional at runtime)
     "tavily-python>=0.3.0",
     # Supabase client for Storage downloads inside the ML service

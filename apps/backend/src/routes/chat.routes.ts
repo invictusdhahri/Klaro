@@ -1,7 +1,15 @@
 import { Router } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
-import { chatHistoryQuerySchema, chatSendRequestSchema, chatStreamQuerySchema, CLAUDE_HAIKU, CLAUDE_SONNET } from '@klaro/shared';
-import type { ChatMode, ChatHistoryQuery, ChatSendInput, Json } from '@klaro/shared';
+import multer from 'multer';
+import {
+  chatHistoryQuerySchema,
+  chatSendRequestSchema,
+  chatStreamQuerySchema,
+  chatSessionRenameSchema,
+  CLAUDE_HAIKU,
+  CLAUDE_SONNET,
+} from '@klaro/shared';
+import type { ChatMode, ChatHistoryQuery, ChatSendInput, Json, UserMemory } from '@klaro/shared';
 import { requireAuth } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { supabaseAdmin } from '../services/supabase';
@@ -11,6 +19,27 @@ import { logger } from '../lib/logger';
 export const chatRouter = Router();
 
 chatRouter.use(requireAuth);
+
+// ---------------------------------------------------------------------------
+// Multer for chat file attachments (images + PDF, max 10 MB)
+// ---------------------------------------------------------------------------
+const CHAT_ALLOWED_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'application/pdf',
+]);
+
+const chatUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    if (CHAT_ALLOWED_MIMES.has(file.mimetype)) cb(null, true);
+    else cb(new Error(`Unsupported file type: ${file.mimetype}`));
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Anthropic client (lazy — only constructed when API key is present)
@@ -124,7 +153,6 @@ async function buildFinancialContext(userId: string): Promise<string> {
       `Last ${txs.length} transactions: income ${income.toFixed(2)} TND, expenses ${expense.toFixed(2)} TND, ratio ${income > 0 ? ((expense / income) * 100).toFixed(0) : 'N/A'}%`,
     );
 
-    // Category breakdown for debits
     const cats: Record<string, number> = {};
     for (const t of txs.filter((tx) => tx.transaction_type === 'debit')) {
       const cat = t.category ?? 'other';
@@ -136,7 +164,6 @@ async function buildFinancialContext(userId: string): Promise<string> {
       .map(([k, v]) => `${k}: ${v.toFixed(2)} TND`);
     if (top.length) parts.push(`Top spending categories: ${top.join(', ')}`);
 
-    // Recent sample
     const sample = txs.slice(0, 8).map(
       (t) =>
         `${t.transaction_date} | ${t.transaction_type === 'credit' ? '+' : '-'}${Number(t.amount).toFixed(2)} TND | ${t.category ?? 'uncategorized'} | ${t.counterparty ?? t.description ?? 'unknown'}`,
@@ -148,6 +175,228 @@ async function buildFinancialContext(userId: string): Promise<string> {
 
   parts.push('--- END CONTEXT ---');
   return parts.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Session helpers
+// ---------------------------------------------------------------------------
+interface ChatSession {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string | null;
+  message_count: number;
+  is_summarized: boolean;
+  archived_at: string | null;
+}
+
+async function getOrCreateActiveSession(userId: string, sessionId?: string): Promise<ChatSession> {
+  // If a specific session is requested, verify ownership and return it.
+  if (sessionId) {
+    const { data } = await supabaseAdmin
+      .from('chat_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+      .is('archived_at', null)
+      .single();
+    if (data) return data as ChatSession;
+  }
+
+  // Return the most recently used non-archived session.
+  const { data: recent } = await supabaseAdmin
+    .from('chat_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .is('archived_at', null)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (recent) return recent as ChatSession;
+
+  // Create a brand-new session.
+  const { data: created, error } = await supabaseAdmin
+    .from('chat_sessions')
+    .insert({ user_id: userId, title: 'New chat' })
+    .select('*')
+    .single();
+
+  if (error || !created) {
+    throw new Error(`Failed to create chat session: ${error?.message ?? 'unknown'}`);
+  }
+  return created as ChatSession;
+}
+
+async function bumpSessionDirect(sessionId: string, count: number): Promise<void> {
+  // Fetch current count, then update — acceptable for our low-concurrency use case.
+  const { data } = await supabaseAdmin
+    .from('chat_sessions')
+    .select('message_count')
+    .eq('id', sessionId)
+    .single();
+
+  await supabaseAdmin
+    .from('chat_sessions')
+    .update({
+      updated_at: new Date().toISOString(),
+      last_message_at: new Date().toISOString(),
+      message_count: ((data?.message_count as number | null) ?? 0) + count,
+    })
+    .eq('id', sessionId);
+}
+
+async function maybeGenerateTitle(
+  anthropic: Anthropic,
+  session: ChatSession,
+  firstUserMessage: string,
+): Promise<void> {
+  if (session.title !== 'New chat' || session.message_count > 0) return;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: CLAUDE_HAIKU,
+      max_tokens: 30,
+      system: `Generate a 3-5 word title for a financial advisor chat session based on the user's first message. 
+Return ONLY the title, no quotes, no punctuation at the end. Match the language of the message.`,
+      messages: [{ role: 'user', content: firstUserMessage.slice(0, 200) }],
+    });
+    const title =
+      response.content[0]?.type === 'text'
+        ? response.content[0].text.trim().slice(0, 120)
+        : null;
+
+    if (title) {
+      await supabaseAdmin
+        .from('chat_sessions')
+        .update({ title })
+        .eq('id', session.id)
+        .eq('title', 'New chat'); // only if still "New chat" (race guard)
+    }
+  } catch (err) {
+    logger.warn({ err, sessionId: session.id }, 'maybeGenerateTitle failed');
+  }
+}
+
+async function summarizeSessionIfStale(
+  anthropic: Anthropic,
+  userId: string,
+  currentSessionId: string,
+): Promise<void> {
+  try {
+    // Summarize any previous session that still has unsummarized messages.
+    // We exclude only the *current* session (which the user is actively in).
+    // No idle-time gate is needed — if the user has moved on to a new session,
+    // the old one is ready to be distilled into memories immediately.
+    const { data: staleSessions } = await supabaseAdmin
+      .from('chat_sessions')
+      .select('id')
+      .eq('user_id', userId)
+      .neq('id', currentSessionId)
+      .eq('is_summarized', false)
+      .gt('message_count', 1)
+      .order('last_message_at', { ascending: true }) // oldest first
+      .limit(3); // process up to 3 backlogged sessions per call
+
+    if (!staleSessions?.length) return;
+
+    const staleSession = staleSessions[0];
+    if (!staleSession) return;
+
+    // Process all returned sessions sequentially (up to the limit).
+    for (const staleSession of staleSessions) {
+      if (!staleSession) continue;
+
+    const { data: messages } = await supabaseAdmin
+      .from('chat_messages')
+      .select('role, content')
+      .eq('session_id', staleSession.id)
+      .order('created_at', { ascending: true });
+
+    if (!messages?.length) {
+      await supabaseAdmin
+        .from('chat_sessions')
+        .update({ is_summarized: true })
+        .eq('id', staleSession.id as string);
+        continue;
+    }
+
+    const transcript = messages
+      .map((m: { role: string; content: string }) => `${m.role === 'user' ? 'User' : 'Advisor'}: ${m.content.slice(0, 300)}`)
+      .join('\n');
+
+    const response = await anthropic.messages.create({
+      model: CLAUDE_HAIKU,
+      max_tokens: 400,
+      system: `You are extracting long-term memory facts from a financial advisor conversation.
+Extract 2-5 short, factual sentences in English (regardless of conversation language) that would help a financial advisor remember important things about this user in future sessions.
+Rules:
+- Only include facts that are genuinely useful for future advice
+- No PII duplication of what's already in their profile (name, email, etc.)
+- Keep each fact under 20 words
+- Return ONLY valid JSON: {"facts": [{"fact": "...", "category": "goal|preference|situation|concern|fact", "importance": 1-5}]}`,
+      messages: [{ role: 'user', content: `Conversation transcript:\n${transcript}` }],
+    });
+
+    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+      let parsed: { facts: Array<{ fact: string; category: string; importance: number }> } | null = null;
+      try {
+        parsed = JSON.parse(text) as { facts: Array<{ fact: string; category: string; importance: number }> };
+      } catch {
+        // If JSON parse fails, still mark as summarized so we don't retry forever.
+      }
+
+    if (parsed?.facts?.length) {
+      await supabaseAdmin.from('user_memories').insert(
+        parsed.facts.map((f) => ({
+          user_id: userId,
+          source_session_id: staleSession.id as string,
+          fact: f.fact,
+          category: f.category,
+          importance: Math.min(5, Math.max(1, f.importance)),
+        })),
+      );
+    }
+
+    await supabaseAdmin
+      .from('chat_sessions')
+      .update({ is_summarized: true })
+        .eq('id', staleSession.id as string);
+    }
+  } catch (err) {
+    logger.warn({ err, userId }, 'summarizeSessionIfStale failed (non-fatal)');
+  }
+}
+
+async function loadUserMemories(userId: string, limit = 15): Promise<UserMemory[]> {
+  const { data } = await supabaseAdmin
+    .from('user_memories')
+    .select('id, user_id, source_session_id, fact, category, importance, created_at')
+    .eq('user_id', userId)
+    .order('importance', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  return (data ?? []).map((m) => ({
+    id: m.id as string,
+    userId: m.user_id as string,
+    sourceSessionId: m.source_session_id as string | null,
+    fact: m.fact as string,
+    category: m.category as UserMemory['category'],
+    importance: m.importance as number,
+    createdAt: m.created_at as string,
+  }));
+}
+
+function buildMemoryBlock(memories: UserMemory[]): string {
+  if (!memories.length) return '';
+  return (
+    '\n\n--- LONG-TERM MEMORY (things you remember about this user from past sessions) ---\n' +
+    memories.map((m) => `- ${m.fact}`).join('\n') +
+    '\n--- END MEMORY ---'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +429,44 @@ async function classifyIntent(
 }
 
 // ---------------------------------------------------------------------------
+// Haiku: generate contextual follow-up suggestions from the response
+// ---------------------------------------------------------------------------
+async function generateFollowUps(
+  userMessage: string,
+  assistantResponse: string,
+  anthropic: Anthropic,
+): Promise<string[]> {
+  try {
+    const response = await anthropic.messages.create({
+      model: CLAUDE_HAIKU,
+      max_tokens: 200,
+      system: `You are a follow-up question generator for a financial advisor chatbot focused on Tunisia.
+Given the user's question and the advisor's response, generate exactly 4 short follow-up questions the user might naturally want to ask next.
+Rules:
+- Questions must be directly related to topics mentioned in the response
+- Each question must be under 12 words
+- Match the language of the user's message (French, Arabic, or English)
+- Return ONLY a JSON array of 4 strings, no other text
+Example: ["How much can I save per month?", "What is my biggest expense?", "Can I afford a car?", "How do I improve my score?"]`,
+      messages: [
+        {
+          role: 'user',
+          content: `User asked: "${userMessage}"\n\nAdvisor responded: "${assistantResponse.slice(0, 800)}"`,
+        },
+      ],
+    });
+    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '[]';
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed) && parsed.every((s) => typeof s === 'string')) {
+      return (parsed as string[]).slice(0, 4);
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Persist a chat message to the DB
 // ---------------------------------------------------------------------------
 async function persistMessage(
@@ -187,12 +474,14 @@ async function persistMessage(
   role: 'user' | 'assistant',
   content: string,
   contextSnapshot?: Record<string, unknown>,
+  sessionId?: string,
 ) {
   await supabaseAdmin.from('chat_messages').insert({
     user_id: userId,
     role,
     content,
     context_snapshot: (contextSnapshot ?? null) as Json | null,
+    session_id: sessionId ?? null,
   });
 }
 
@@ -201,19 +490,28 @@ async function persistMessage(
 // ---------------------------------------------------------------------------
 chatRouter.post('/send', validate(chatSendRequestSchema), async (req, res) => {
   const userId = req.user!.id;
-  const { content, mode } = req.body as ChatSendInput;
+  const { content, mode, sessionId: reqSessionId } = req.body as ChatSendInput & { sessionId?: string };
 
   const anthropic = getAnthropic();
 
   if (!anthropic) {
-    await persistMessage(userId, 'user', content);
+    const session = await getOrCreateActiveSession(userId, reqSessionId);
+    await persistMessage(userId, 'user', content, {}, session.id);
     const fallback =
       'The AI advisor is not configured yet (missing ANTHROPIC_API_KEY). Your message has been saved.';
-    await persistMessage(userId, 'assistant', fallback);
-    return res.json({ role: 'assistant', content: fallback, mode });
+    await persistMessage(userId, 'assistant', fallback, {}, session.id);
+    await bumpSessionDirect(session.id, 2);
+    return res.json({ role: 'assistant', content: fallback, mode, sessionId: session.id });
   }
 
   try {
+    const session = await getOrCreateActiveSession(userId, reqSessionId);
+    const wasNew = session.message_count === 0;
+
+    // Summarize old sessions first, then load the freshest memories.
+    await summarizeSessionIfStale(anthropic, userId, session.id).catch(() => {});
+    const memories = await loadUserMemories(userId);
+
     const [context, { safe, mode: detectedMode }] = await Promise.all([
       buildFinancialContext(userId),
       classifyIntent(content, anthropic),
@@ -227,11 +525,12 @@ chatRouter.post('/send', validate(chatSendRequestSchema), async (req, res) => {
     }
 
     const effectiveMode = mode !== 'general' ? mode : detectedMode;
+    const memoryBlock = buildMemoryBlock(memories);
 
     const response = await anthropic.messages.create({
       model: CLAUDE_SONNET,
       max_tokens: 1024,
-      system: `${MODE_PROMPTS[effectiveMode]}\n\n${context}`,
+      system: `${MODE_PROMPTS[effectiveMode]}${memoryBlock}\n\n${context}`,
       messages: [{ role: 'user', content }],
     });
 
@@ -239,11 +538,18 @@ chatRouter.post('/send', validate(chatSendRequestSchema), async (req, res) => {
       response.content[0]?.type === 'text' ? response.content[0].text : 'Sorry, I could not generate a response.';
 
     await Promise.all([
-      persistMessage(userId, 'user', content),
-      persistMessage(userId, 'assistant', assistantContent, { mode: effectiveMode }),
+      persistMessage(userId, 'user', content, {}, session.id),
+      persistMessage(userId, 'assistant', assistantContent, { mode: effectiveMode }, session.id),
     ]);
+    await bumpSessionDirect(session.id, 2);
 
-    return res.json({ role: 'assistant', content: assistantContent, mode: effectiveMode });
+    // Fire-and-forget post-send jobs
+    if (wasNew) {
+      maybeGenerateTitle(anthropic, session, content).catch(() => {});
+    }
+    summarizeSessionIfStale(anthropic, userId, session.id).catch(() => {});
+
+    return res.json({ role: 'assistant', content: assistantContent, mode: effectiveMode, sessionId: session.id });
   } catch (err) {
     logger.error({ err, userId }, 'chat send failed');
     return res.status(500).json({ error: 'Failed to get advisor response. Please try again.' });
@@ -252,11 +558,15 @@ chatRouter.post('/send', validate(chatSendRequestSchema), async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /stream — SSE streaming via Claude Sonnet
-// Accepts: ?message=...&mode=...
+// Accepts: ?message=...&mode=...&sessionId=...
 // ---------------------------------------------------------------------------
 chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, res) => {
   const userId = req.user!.id;
-  const { message, mode } = req.query as { message: string; mode: ChatMode };
+  const { message, mode, sessionId: reqSessionId } = req.query as {
+    message: string;
+    mode: ChatMode;
+    sessionId?: string;
+  };
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -279,6 +589,13 @@ chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, 
   }
 
   try {
+    const session = await getOrCreateActiveSession(userId, reqSessionId);
+    const wasNew = session.message_count === 0;
+
+    // Summarize old sessions first so memories include everything from past chats.
+    await summarizeSessionIfStale(anthropic, userId, session.id).catch(() => {});
+    const memories = await loadUserMemories(userId);
+
     const [context, { safe, mode: detectedMode }] = await Promise.all([
       buildFinancialContext(userId),
       classifyIntent(message, anthropic),
@@ -295,14 +612,14 @@ chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, 
     }
 
     const effectiveMode = mode !== 'general' ? mode : detectedMode;
+    const memoryBlock = buildMemoryBlock(memories);
     let fullContent = '';
-
     let streamErrored = false;
 
     const stream = anthropic.messages.stream({
       model: CLAUDE_SONNET,
       max_tokens: 1024,
-      system: `${MODE_PROMPTS[effectiveMode]}\n\n${context}`,
+      system: `${MODE_PROMPTS[effectiveMode]}${memoryBlock}\n\n${context}`,
       messages: [{ role: 'user', content: message }],
     });
 
@@ -322,14 +639,21 @@ chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, 
     await stream.finalMessage();
 
     if (!streamErrored) {
-      sendEvent({ type: 'done', mode: effectiveMode });
+      const suggestions = await generateFollowUps(message, fullContent, anthropic).catch(() => []);
+
+      sendEvent({ type: 'done', mode: effectiveMode, suggestions, sessionId: session.id });
       res.end();
 
-      // Persist after stream completes — non-blocking.
       Promise.all([
-        persistMessage(userId, 'user', message),
-        persistMessage(userId, 'assistant', fullContent, { mode: effectiveMode, streamed: true }),
-      ]).catch((err) => logger.warn({ err, userId }, 'chat persist after stream failed'));
+        persistMessage(userId, 'user', message, {}, session.id),
+        persistMessage(userId, 'assistant', fullContent, { mode: effectiveMode, streamed: true }, session.id),
+      ])
+        .then(() => bumpSessionDirect(session.id, 2))
+        .then(() => {
+          if (wasNew) maybeGenerateTitle(anthropic, session, message).catch(() => {});
+          summarizeSessionIfStale(anthropic, userId, session.id).catch(() => {});
+        })
+        .catch((err) => logger.warn({ err, userId }, 'chat persist after stream failed'));
     }
   } catch (err) {
     logger.error({ err, userId }, 'chat stream setup failed');
@@ -340,7 +664,178 @@ chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, 
 });
 
 // ---------------------------------------------------------------------------
-// GET /history — paginated chat history from DB
+// POST /stream-file — SSE streaming with optional file attachment.
+// ---------------------------------------------------------------------------
+
+type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+// DocumentBlockParam is not exported in SDK 0.32.x; define it locally.
+interface DocumentBlockParam {
+  type: 'document';
+  source: { type: 'base64'; media_type: 'application/pdf'; data: string };
+}
+
+type UserContentBlock =
+  | Anthropic.ImageBlockParam
+  | Anthropic.TextBlockParam
+  | DocumentBlockParam;
+
+chatRouter.post('/stream-file', chatUpload.single('file'), async (req, res) => {
+  const userId = req.user!.id;
+  const message = ((req.body?.message as string | undefined) ?? '').trim();
+  const rawMode = (req.body?.mode as string | undefined) ?? 'general';
+  const reqSessionId = (req.body?.sessionId as string | undefined) || undefined;
+  const validModes: ChatMode[] = ['spending_analysis', 'habit_insights', 'score_tips', 'general'];
+  const mode: ChatMode = validModes.includes(rawMode as ChatMode) ? (rawMode as ChatMode) : 'general';
+  const file = req.file;
+
+  if (!message && !file) {
+    return res.status(400).json({ error: 'message or file is required' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const sendEvent2 = (data: Record<string, unknown>) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const anthropic = getAnthropic();
+
+  if (!anthropic) {
+    sendEvent2({ type: 'delta', content: 'AI advisor not configured (ANTHROPIC_API_KEY missing).' });
+    sendEvent2({ type: 'done' });
+    res.end();
+    return;
+  }
+
+  try {
+    const session = await getOrCreateActiveSession(userId, reqSessionId);
+    const wasNew = session.message_count === 0;
+
+    // Summarize old sessions first so memories include everything from past chats.
+    await summarizeSessionIfStale(anthropic, userId, session.id).catch(() => {});
+    const memories = await loadUserMemories(userId);
+
+    const classifyText =
+      message ||
+      (file
+        ? `User sent a ${file.mimetype.startsWith('image/') ? 'image' : 'document'} file: ${file.originalname}`
+        : '');
+
+    const [context, { safe, mode: detectedMode }] = await Promise.all([
+      buildFinancialContext(userId),
+      classifyIntent(classifyText, anthropic),
+    ]);
+
+    if (!safe) {
+      sendEvent2({
+        type: 'error',
+        error: 'Please keep questions focused on your personal finances and financial health.',
+      });
+      sendEvent2({ type: 'done' });
+      res.end();
+      return;
+    }
+
+    const effectiveMode = mode !== 'general' ? mode : detectedMode;
+    const memoryBlock = buildMemoryBlock(memories);
+
+    const userContent: UserContentBlock[] = [];
+
+    if (file) {
+      const base64 = file.buffer.toString('base64');
+      if (file.mimetype === 'application/pdf') {
+        userContent.push({
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+        });
+      } else {
+        userContent.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: file.mimetype as ImageMediaType,
+            data: base64,
+          },
+        });
+      }
+    }
+
+    if (message) {
+      userContent.push({ type: 'text', text: message });
+    } else {
+      const autoPrompt =
+        file?.mimetype === 'application/pdf'
+          ? 'Please analyse this document in the context of my finances and provide relevant insights.'
+          : 'Please look at this image and share any relevant financial insights or observations.';
+      userContent.push({ type: 'text', text: autoPrompt });
+    }
+
+    let fullContent = '';
+    let streamErrored = false;
+
+    const stream = anthropic.messages.stream({
+      model: CLAUDE_SONNET,
+      max_tokens: 1024,
+      system: `${MODE_PROMPTS[effectiveMode]}${memoryBlock}\n\n${context}`,
+      messages: [{ role: 'user', content: userContent as Anthropic.MessageParam['content'] }],
+    });
+
+    stream.on('text', (text) => {
+      fullContent += text;
+      sendEvent2({ type: 'delta', content: text });
+    });
+
+    stream.on('error', (err) => {
+      streamErrored = true;
+      logger.error({ err, userId }, 'chat stream-file error');
+      sendEvent2({
+        type: 'error',
+        error: 'Something went wrong while generating a response. Please try again.',
+      });
+      sendEvent2({ type: 'done' });
+      res.end();
+    });
+
+    await stream.finalMessage();
+
+    if (!streamErrored) {
+      sendEvent2({ type: 'done', mode: effectiveMode, sessionId: session.id });
+      res.end();
+
+      const persistText = message || `[Attached: ${file?.originalname ?? 'file'}]`;
+      Promise.all([
+        persistMessage(userId, 'user', persistText, {}, session.id),
+        persistMessage(
+          userId,
+          'assistant',
+          fullContent,
+          { mode: effectiveMode, streamed: true, hasAttachment: Boolean(file), attachmentMime: file?.mimetype ?? null },
+          session.id,
+        ),
+      ])
+        .then(() => bumpSessionDirect(session.id, 2))
+        .then(() => {
+          if (wasNew) maybeGenerateTitle(anthropic, session, persistText).catch(() => {});
+          summarizeSessionIfStale(anthropic, userId, session.id).catch(() => {});
+        })
+        .catch((err) => logger.warn({ err, userId }, 'chat persist after stream-file failed'));
+    }
+  } catch (err) {
+    logger.error({ err, userId }, 'chat stream-file setup failed');
+    sendEvent2({ type: 'error', error: 'Failed to reach the AI advisor. Please try again.' });
+    sendEvent2({ type: 'done' });
+    res.end();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /history — paginated chat history from DB (backwards-compatible)
 // ---------------------------------------------------------------------------
 chatRouter.get('/history', validate(chatHistoryQuerySchema, 'query'), async (req, res) => {
   const userId = req.user!.id;
@@ -348,7 +843,7 @@ chatRouter.get('/history', validate(chatHistoryQuerySchema, 'query'), async (req
 
   let query = supabaseAdmin
     .from('chat_messages')
-    .select('id, role, content, created_at')
+    .select('id, role, content, created_at, session_id')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(q.limit ?? 50);
@@ -364,4 +859,185 @@ chatRouter.get('/history', validate(chatHistoryQuerySchema, 'query'), async (req
   }
 
   return res.json((data ?? []).reverse());
+});
+
+// ---------------------------------------------------------------------------
+// GET /sessions — list user's active sessions
+// ---------------------------------------------------------------------------
+chatRouter.get('/sessions', async (req, res) => {
+  const userId = req.user!.id;
+
+  const { data, error } = await supabaseAdmin
+    .from('chat_sessions')
+    .select('id, title, created_at, updated_at, last_message_at, message_count')
+    .eq('user_id', userId)
+    .is('archived_at', null)
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    return res.status(500).json({ error: 'Failed to fetch sessions' });
+  }
+
+  return res.json(
+    (data ?? []).map((s) => ({
+      id: s.id,
+      title: s.title,
+      createdAt: s.created_at,
+      updatedAt: s.updated_at,
+      lastMessageAt: s.last_message_at,
+      messageCount: s.message_count,
+    })),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// POST /sessions — explicitly create a new empty session
+// ---------------------------------------------------------------------------
+chatRouter.post('/sessions', async (req, res) => {
+  const userId = req.user!.id;
+
+  const { data, error } = await supabaseAdmin
+    .from('chat_sessions')
+    .insert({ user_id: userId, title: 'New chat' })
+    .select('id, title, created_at, updated_at, last_message_at, message_count')
+    .single();
+
+  if (error || !data) {
+    return res.status(500).json({ error: 'Failed to create session' });
+  }
+
+  // Await summarization of old sessions so memories are ready before the
+  // user sends their first message in this new session.
+  const anthropic = getAnthropic();
+  if (anthropic) {
+    await summarizeSessionIfStale(anthropic, userId, data.id as string).catch(() => {});
+  }
+
+  return res.status(201).json({
+    id: data.id,
+    title: data.title,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+    lastMessageAt: data.last_message_at,
+    messageCount: data.message_count,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /sessions/:id — rename a session
+// ---------------------------------------------------------------------------
+chatRouter.patch('/sessions/:id', validate(chatSessionRenameSchema), async (req, res) => {
+  const userId = req.user!.id;
+  const id = req.params.id as string;
+  const { title } = req.body as { title: string };
+
+  const { error } = await supabaseAdmin
+    .from('chat_sessions')
+    .update({ title, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    return res.status(500).json({ error: 'Failed to rename session' });
+  }
+
+  return res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /sessions/:id — hard-delete a session (memories survive via set null)
+// ---------------------------------------------------------------------------
+chatRouter.delete('/sessions/:id', async (req, res) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { error } = await supabaseAdmin
+    .from('chat_sessions')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    return res.status(500).json({ error: 'Failed to delete session' });
+  }
+
+  return res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// GET /sessions/:id/messages — paginated messages for a single session
+// ---------------------------------------------------------------------------
+chatRouter.get('/sessions/:id/messages', async (req, res) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const limit = Math.min(Number(req.query.limit) || 100, 200);
+  const before = req.query.before as string | undefined;
+
+  // Verify ownership
+  const { data: session } = await supabaseAdmin
+    .from('chat_sessions')
+    .select('id')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .single();
+
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  let query = supabaseAdmin
+    .from('chat_messages')
+    .select('id, role, content, created_at, context_snapshot, session_id')
+    .eq('session_id', id)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (before) {
+    query = query.lt('created_at', before);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+
+  // Await summarization of previous sessions before returning messages.
+  // This ensures memories are already written when the client renders and
+  // the user sends their first message — no more "I don't know your dream car".
+  const anthropic = getAnthropic();
+  if (anthropic) {
+    await summarizeSessionIfStale(anthropic, userId, id).catch(() => {});
+  }
+
+  return res.json((data ?? []).reverse());
+});
+
+// ---------------------------------------------------------------------------
+// GET /memories — list user's long-term memories (read-only inspection)
+// ---------------------------------------------------------------------------
+chatRouter.get('/memories', async (req, res) => {
+  const userId = req.user!.id;
+  const memories = await loadUserMemories(userId, 50);
+  return res.json(memories);
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /memories/:id — delete a single memory
+// ---------------------------------------------------------------------------
+chatRouter.delete('/memories/:id', async (req, res) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { error } = await supabaseAdmin
+    .from('user_memories')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    return res.status(500).json({ error: 'Failed to delete memory' });
+  }
+
+  return res.json({ ok: true });
 });

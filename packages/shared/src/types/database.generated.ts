@@ -196,6 +196,8 @@ export type Database = {
       bank_statements: {
         Row: {
           anomaly_report: Json
+          clarification_answers: Json
+          clarification_questions: Json
           coherence_score: number | null
           created_at: string
           error_message: string | null
@@ -203,7 +205,10 @@ export type Database = {
           file_hash: string
           file_name: string
           id: string
+          income_assessment: Json
           mime_type: string
+          reasoning: Json
+          risk_score: number | null
           status: string
           storage_path: string
           user_id: string
@@ -211,6 +216,8 @@ export type Database = {
         }
         Insert: {
           anomaly_report?: Json
+          clarification_answers?: Json
+          clarification_questions?: Json
           coherence_score?: number | null
           created_at?: string
           error_message?: string | null
@@ -218,7 +225,10 @@ export type Database = {
           file_hash: string
           file_name: string
           id?: string
+          income_assessment?: Json
           mime_type: string
+          reasoning?: Json
+          risk_score?: number | null
           status?: string
           storage_path: string
           user_id: string
@@ -226,6 +236,8 @@ export type Database = {
         }
         Update: {
           anomaly_report?: Json
+          clarification_answers?: Json
+          clarification_questions?: Json
           coherence_score?: number | null
           created_at?: string
           error_message?: string | null
@@ -233,7 +245,10 @@ export type Database = {
           file_hash?: string
           file_name?: string
           id?: string
+          income_assessment?: Json
           mime_type?: string
+          reasoning?: Json
+          risk_score?: number | null
           status?: string
           storage_path?: string
           user_id?: string
@@ -249,6 +264,50 @@ export type Database = {
           },
         ]
       }
+      chat_sessions: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          id: string
+          is_summarized: boolean
+          last_message_at: string | null
+          message_count: number
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          id?: string
+          is_summarized?: boolean
+          last_message_at?: string | null
+          message_count?: number
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          id?: string
+          is_summarized?: boolean
+          last_message_at?: string | null
+          message_count?: number
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_sessions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_messages: {
         Row: {
           content: string
@@ -256,6 +315,7 @@ export type Database = {
           created_at: string
           id: string
           role: string
+          session_id: string | null
           user_id: string
         }
         Insert: {
@@ -264,6 +324,7 @@ export type Database = {
           created_at?: string
           id?: string
           role: string
+          session_id?: string | null
           user_id: string
         }
         Update: {
@@ -272,6 +333,7 @@ export type Database = {
           created_at?: string
           id?: string
           role?: string
+          session_id?: string | null
           user_id?: string
         }
         Relationships: [
@@ -280,6 +342,13 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "chat_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -449,6 +518,7 @@ export type Database = {
           description: string | null
           id: string
           source: string
+          statement_id: string | null
           transaction_date: string
           transaction_type: string
           user_id: string
@@ -463,6 +533,7 @@ export type Database = {
           description?: string | null
           id?: string
           source: string
+          statement_id?: string | null
           transaction_date: string
           transaction_type: string
           user_id: string
@@ -477,6 +548,7 @@ export type Database = {
           description?: string | null
           id?: string
           source?: string
+          statement_id?: string | null
           transaction_date?: string
           transaction_type?: string
           user_id?: string
@@ -490,10 +562,62 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "transactions_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statements"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "transactions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_memories: {
+        Row: {
+          category: string | null
+          created_at: string
+          fact: string
+          id: string
+          importance: number
+          source_session_id: string | null
+          user_id: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          fact: string
+          id?: string
+          importance?: number
+          source_session_id?: string | null
+          user_id: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          fact?: string
+          id?: string
+          importance?: number
+          source_session_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_memories_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_memories_source_session_id_fkey"
+            columns: ["source_session_id"]
+            isOneToOne: false
+            referencedRelation: "chat_sessions"
             referencedColumns: ["id"]
           },
         ]

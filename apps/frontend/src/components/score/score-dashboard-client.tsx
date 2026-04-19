@@ -6,9 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { ScoreGauge } from '@/components/score/score-gauge';
 import { ScoreBreakdown } from '@/components/score/score-breakdown';
+import { ScoreActions } from '@/components/score/score-actions';
 import { api } from '@/lib/api';
 import { createClient } from '@/lib/supabase/client';
-import type { ScoreBreakdown as ScoreBreakdownType } from '@klaro/shared';
+import type { ScoreBreakdown as ScoreBreakdownType, ScoreAction, ScoreActionCategory } from '@klaro/shared';
 import { API_ENDPOINTS } from '@klaro/shared';
 
 interface RawScoreRow {
@@ -37,10 +38,69 @@ function mapBreakdown(raw: Record<string, unknown>): ScoreBreakdownType {
   };
 }
 
+function mapActions(raw: Record<string, unknown>): ScoreAction[] {
+  const rawActions = raw.actions as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(rawActions)) return [];
+  return rawActions.map((a) => ({
+    id: (a.id as string) ?? '',
+    title: (a.title as string) ?? '',
+    rationale: (a.rationale as string) ?? '',
+    category: (a.category as ScoreActionCategory) ?? 'behavior',
+    expectedImpactPoints: (a.expected_impact_points as number) ?? 0,
+    impactConfidence: (a.impact_confidence as number) ?? 0.5,
+  }));
+}
+
+function scoreCalculationPhase(pct: number): string {
+  if (pct < 22) return 'Preparing your data…';
+  if (pct < 50) return 'Analyzing transactions and documents…';
+  if (pct < 78) return 'Running risk and consistency checks…';
+  if (pct < 97) return 'Generating your personalized score…';
+  return 'Finishing up…';
+}
+
+function ScoreCalculationProgress({
+  progress,
+  className,
+}: {
+  progress: number;
+  className?: string;
+}) {
+  const clamped = Math.min(100, Math.max(0, progress));
+  const label = scoreCalculationPhase(clamped);
+
+  return (
+    <div className={className} role="status" aria-live="polite" aria-busy="true">
+      <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate">{label}</span>
+        <span className="tabular-nums text-muted-foreground/80">{Math.round(clamped)}%</span>
+      </div>
+      <div
+        className="h-2 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(clamped)}
+        aria-label="Score calculation progress"
+      >
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground/90">
+        This usually takes 10–40 seconds. You can stay on this page.
+      </p>
+    </div>
+  );
+}
+
 export function ScoreDashboardClient({ initialScore, userId }: Props) {
   const [scoreRow, setScoreRow] = useState<RawScoreRow | null>(initialScore);
   const [calculating, setCalculating] = useState(false);
+  const [calcProgress, setCalcProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [hoveredCategory, setHoveredCategory] = useState<ScoreActionCategory | null>(null);
 
   // Realtime subscription — listens for score_updated broadcast.
   useEffect(() => {
@@ -48,7 +108,6 @@ export function ScoreDashboardClient({ initialScore, userId }: Props) {
     const channel = supabase
       .channel(`score:${userId}`)
       .on('broadcast', { event: 'score_updated' }, () => {
-        // Re-fetch the full latest score row when notified.
         api
           .get<RawScoreRow>(API_ENDPOINTS.score.current)
           .then((row) => setScoreRow(row))
@@ -61,11 +120,38 @@ export function ScoreDashboardClient({ initialScore, userId }: Props) {
     };
   }, [userId]);
 
+  useEffect(() => {
+    if (!calculating) {
+      setCalcProgress(0);
+      return;
+    }
+
+    let raf = 0;
+    let cancelled = false;
+    const start = performance.now();
+
+    const loop = () => {
+      if (cancelled) return;
+      const elapsed = performance.now() - start;
+      const asymptotic = 8 + 84 * (1 - Math.exp(-elapsed / 11000));
+      setCalcProgress(Math.min(92, asymptotic));
+      raf = requestAnimationFrame(loop);
+    };
+
+    raf = requestAnimationFrame(loop);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [calculating]);
+
   const handleCalculate = useCallback(async () => {
     setCalculating(true);
     setError(null);
     try {
       const result = await api.post<RawScoreRow>(API_ENDPOINTS.score.calculate);
+      setCalcProgress(100);
+      await new Promise((r) => setTimeout(r, 280));
       setScoreRow(result);
     } catch (err: unknown) {
       const body = (err as { body?: { error?: string; reason?: string } }).body;
@@ -109,6 +195,7 @@ export function ScoreDashboardClient({ initialScore, userId }: Props) {
                 )}
               </div>
             )}
+            {calculating && <ScoreCalculationProgress progress={calcProgress} />}
             <Button onClick={handleCalculate} disabled={calculating}>
               {calculating ? 'Calculating…' : 'Generate my Klaro score'}
             </Button>
@@ -119,7 +206,14 @@ export function ScoreDashboardClient({ initialScore, userId }: Props) {
   }
 
   const breakdown = mapBreakdown(scoreRow.breakdown);
-  const tips = (scoreRow.recommendations ?? []) as string[];
+  const actions = mapActions(scoreRow.breakdown);
+
+  // Sum of expected impacts, capped at headroom
+  const headroom = 1000 - scoreRow.score;
+  const totalImpact = Math.min(
+    headroom,
+    actions.reduce((s, a) => s + a.expectedImpactPoints, 0),
+  );
 
   return (
     <div className="space-y-6">
@@ -140,40 +234,46 @@ export function ScoreDashboardClient({ initialScore, userId }: Props) {
             <CardDescription>What is helping and hurting your score</CardDescription>
           </CardHeader>
           <CardContent>
-            <ScoreBreakdown breakdown={breakdown} />
+            <ScoreBreakdown breakdown={breakdown} hoveredCategory={hoveredCategory} />
           </CardContent>
         </Card>
       </div>
 
-      {tips.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Next steps</CardTitle>
-            <CardDescription>Personalized actions to improve your score</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              {tips.map((tip, i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="mt-0.5 text-primary">→</span>
-                  <span>{tip}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle className="text-base">Next steps</CardTitle>
+              <CardDescription>Personalized actions to improve your score</CardDescription>
+            </div>
+            {totalImpact > 0 && (
+              <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                Up to +{totalImpact} pts available
+              </span>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <ScoreActions
+            actions={actions}
+            onHoverCategory={setHoveredCategory}
+          />
+        </CardContent>
+      </Card>
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>Last updated: {new Date(scoreRow.created_at).toLocaleString()}</span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleCalculate}
-          disabled={calculating}
-        >
-          {calculating ? 'Recalculating…' : 'Recalculate'}
-        </Button>
+      <div className="space-y-3">
+        {calculating && <ScoreCalculationProgress progress={calcProgress} />}
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Last updated: {new Date(scoreRow.created_at).toLocaleString()}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCalculate}
+            disabled={calculating}
+          >
+            {calculating ? 'Recalculating…' : 'Recalculate'}
+          </Button>
+        </div>
       </div>
       {error && (
         <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>

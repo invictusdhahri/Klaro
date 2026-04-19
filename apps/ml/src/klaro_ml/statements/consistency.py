@@ -18,9 +18,9 @@ import json
 from typing import Any
 
 import anthropic
-import httpx
 
 from klaro_ml.settings import get_settings
+from klaro_ml.utils.web_search import web_search as _shared_web_search
 
 CONSISTENCY_SYSTEM = """\
 You are a financial compliance analyst cross-checking a bank statement against the user's declared profile.
@@ -128,12 +128,13 @@ def check_consistency(
             for block in res.content:
                 if block.type == "tool_use" and block.name == "web_search":
                     query: str = block.input.get("query", "")  # type: ignore[union-attr]
-                    search_result = _web_search(query, settings.TAVILY_API_KEY)
+                    search_result = _shared_web_search(query)
                     web_checks.append({
                         "query": query,
                         "finding": search_result[:500],
                         "passed": "not found" not in search_result.lower()
-                               and "error" not in search_result.lower(),
+                               and not search_result.startswith("[error]")
+                               and not search_result.startswith("[empty]"),
                     })
                     tool_results.append({
                         "type": "tool_result",
@@ -163,32 +164,6 @@ def check_consistency(
         "flags": [],
         "web_checks": web_checks,
     }
-
-
-def _web_search(query: str, api_key: str | None) -> str:
-    """Call Tavily Search API. Gracefully degrades if key not set."""
-    if not api_key:
-        return f"[web search skipped — no TAVILY_API_KEY] query: {query}"
-
-    try:
-        resp = httpx.post(
-            "https://api.tavily.com/search",
-            json={
-                "api_key": api_key,
-                "query": query,
-                "search_depth": "basic",
-                "max_results": 3,
-            },
-            timeout=10.0,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            results = data.get("results", [])
-            snippets = [f"- {r.get('title', '')}: {r.get('content', '')[:200]}" for r in results]
-            return "\n".join(snippets) if snippets else "No results found."
-        return f"Search API error: HTTP {resp.status_code}"
-    except Exception as exc:
-        return f"Search unavailable: {exc}"
 
 
 def _build_context_message(

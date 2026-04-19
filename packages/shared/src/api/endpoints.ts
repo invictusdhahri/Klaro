@@ -27,13 +27,20 @@ export const API_ENDPOINTS = {
   chat: {
     send: '/api/chat/send',
     stream: '/api/chat/stream',
+    streamFile: '/api/chat/stream-file',
     history: '/api/chat/history',
+    sessions: '/api/chat/sessions',
+    session: (id: string) => `/api/chat/sessions/${id}`,
+    sessionMessages: (id: string) => `/api/chat/sessions/${id}/messages`,
+    memories: '/api/chat/memories',
+    deleteMemory: (id: string) => `/api/chat/memories/${id}`,
   },
 
   documents: {
     list: '/api/documents',
     upload: '/api/documents/upload',
     delete: (id: string) => `/api/documents/${id}`,
+    answer: (id: string) => `/api/documents/${id}/answer`,
   },
 
   bank: {

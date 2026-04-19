@@ -9,6 +9,8 @@ export async function persistAndNotifyScore(
   userId: string,
   mlResult: MLScoreResult,
 ): Promise<{ scoreId: string; scoreBand: string }> {
+  // Actions are stored inside breakdown jsonb under key "actions" (zero-migration approach).
+  // breakdown already contains them from compose_score, so we just cast the whole object.
   const { data: scoreRow, error } = await supabaseAdmin
     .from('credit_scores')
     .insert({

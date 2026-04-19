@@ -1,26 +1,30 @@
-"""Statement processing route — Path B pipeline orchestrator.
+"""Statement processing route — multi-layer pipeline orchestrator.
 
+Endpoints
+---------
 POST /statements/process
-  Body: { storagePath, mimeType, userContext }
-  Returns: StatementProcessResult
-    {
-      extraction: { transactions },
-      verification: { passed, failed_layer, layers: { deepfake, authenticity, consistency } },
-      anomalies:   { anomaly_score, flagged, signals }
-    }
+    Run the full pipeline (extraction + L1-L4) and return a verdict.
 
-Pipeline:
-  Pass 1  → Extract transactions (format-aware)
-  Layer 1 → Deepfake / manipulation detection
-  Layer 2 → Document authenticity (structural rules)
-  Layer 3 → Cross-consistency + web search (Claude tool-use + Tavily)
-  Gate    → PASS → Anomaly Detector → return full result
-            FAIL → return verification failure + empty extraction
+POST /statements/reanalyze
+    Re-run only L3.5 (income plausibility) + L4 (reasoner) using the previous
+    verification report and a fresh batch of user answers. Used by the inline
+    "Review needed" panel on the frontend after the user answers a question.
+
+Pipeline
+--------
+    Pass 1  → Extract transactions (format-aware)
+    L1      → Forensics bundle (PDF structure + image forensics + vision ensemble)
+    L2      → Document authenticity (structural rules)
+    L3      → Cross-consistency + web search
+    L3.5    → Income plausibility (deterministic comparator + sanity Sonnet)
+    L4      → Critical-thinking reasoner (clamped LLM + rubric)
+    Gate    → APPROVED  → Anomaly detector → return result
+              NEEDS_REVIEW → return result with questions, status pending answers
+              REJECTED  → return verification failure
 """
 
 from __future__ import annotations
 
-import io
 import logging
 from typing import Any
 
@@ -33,6 +37,8 @@ from klaro_ml.statements.authenticity import check_authenticity
 from klaro_ml.statements.consistency import check_consistency
 from klaro_ml.statements.deepfake import check_deepfake
 from klaro_ml.statements.extractor import extract_transactions
+from klaro_ml.statements.income_plausibility import check_income_plausibility
+from klaro_ml.statements.reasoner import reason as run_reasoner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -54,11 +60,20 @@ class PriorStatement(BaseModel):
 
 class UserContext(BaseModel):
     fullName: str
+    occupation: str | None = None
     occupationCategory: str | None = None
+    educationLevel: str | None = None
+    age: int | None = None
     kycStatus: str = "pending"
     locationGovernorate: str | None = None
+    locationCountry: str | None = "TN"
     kycDocuments: list[KycDocument] = []
     priorStatements: list[PriorStatement] = []
+
+
+class ClarificationAnswer(BaseModel):
+    question_id: str
+    value: Any
 
 
 class StatementProcessRequest(BaseModel):
@@ -68,21 +83,30 @@ class StatementProcessRequest(BaseModel):
     fileBytes: str | None = None  # base64-encoded; if provided, storage download is skipped
 
 
+class StatementReanalyzeRequest(BaseModel):
+    """Re-runs L3.5 + L4 with the previous report + new answers."""
+    userContext: UserContext
+    transactions: list[dict[str, Any]]
+    layers: dict[str, Any]   # the previous `verification.layers` payload
+    previousAnswers: list[ClarificationAnswer] = []
+    newAnswers: list[ClarificationAnswer]
+
+
 class StatementProcessResponse(BaseModel):
     extraction: dict[str, Any]
     verification: dict[str, Any]
     anomalies: dict[str, Any]
+    reasoning: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Endpoint
+# Endpoints
 # ---------------------------------------------------------------------------
 
 @router.post("/process", response_model=StatementProcessResponse)
 async def process_statement(req: StatementProcessRequest) -> StatementProcessResponse:
     settings = get_settings()
 
-    # Download file — use inline bytes if the backend passed them, otherwise fetch from storage
     if req.fileBytes:
         import base64 as _b64
         file_bytes = _b64.b64decode(req.fileBytes)
@@ -103,18 +127,19 @@ async def process_statement(req: StatementProcessRequest) -> StatementProcessRes
     transactions = extract_transactions(file_bytes, mime)
     logger.info("Pass 1 complete: %d transactions extracted", len(transactions))
 
-    # Retrieve raw text for Layer 2 (best-effort from PDF text extraction)
     extracted_text = _get_text_for_authenticity(file_bytes, mime)
 
     # ------------------------------------------------------------------
-    # Layer 1 — Deepfake detection
+    # Layer 1 — Deepfake forensics bundle
     # ------------------------------------------------------------------
-    logger.info("Layer 1: deepfake check")
+    logger.info("Layer 1: forensics bundle")
     l1 = check_deepfake(file_bytes, mime)
-    logger.info("Layer 1 result: passed=%s confidence=%.2f", l1.get("passed"), l1.get("confidence", 0))
+    logger.info("Layer 1 result: passed=%s risk=%.2f signals=%d",
+                l1.get("passed"), l1.get("risk_score", 0), len(l1.get("signals", [])))
 
     if not l1.get("passed", True):
-        return _verification_failed("deepfake", l1, transactions)
+        # Hard fail at L1 -> reject without further layers
+        return _verification_failed("deepfake", l1, transactions, user_ctx)
 
     # ------------------------------------------------------------------
     # Layer 2 — Document authenticity
@@ -125,39 +150,112 @@ async def process_statement(req: StatementProcessRequest) -> StatementProcessRes
                 l2.get("passed"), l2.get("score", 0), l2.get("failed_rules", []))
 
     if not l2.get("passed", True):
-        return _verification_failed("authenticity", l1, transactions, l2=l2)
+        return _verification_failed("authenticity", l1, transactions, user_ctx, l2=l2)
 
     # ------------------------------------------------------------------
     # Layer 3 — Cross-consistency + web search
     # ------------------------------------------------------------------
     logger.info("Layer 3: cross-consistency check")
-    l1_signals = l1.get("signals", [])
-    l3 = check_consistency(transactions, user_ctx, l1_signals)
+    l1_signal_strings = [str(s.get("type", "")) for s in l1.get("signals", [])]
+    l3 = check_consistency(transactions, user_ctx, l1_signal_strings)
     logger.info("Layer 3 result: passed=%s coherence=%.2f flags=%d",
                 l3.get("passed"), l3.get("coherence_score", 0), len(l3.get("flags", [])))
 
     if not l3.get("passed", True):
-        return _verification_failed("consistency", l1, transactions, l2=l2, l3=l3)
+        return _verification_failed("consistency", l1, transactions, user_ctx, l2=l2, l3=l3)
 
     # ------------------------------------------------------------------
-    # All layers PASSED — run Anomaly Detector
+    # Layer 3.5 — Income plausibility
     # ------------------------------------------------------------------
-    logger.info("All layers passed. Running anomaly detector.")
+    logger.info("Layer 3.5: income plausibility check")
+    l35 = check_income_plausibility(transactions, user_ctx, answers=[])
+    logger.info(
+        "Layer 3.5 result: passed=%s implied=%.0f flags=%d questions=%d",
+        l35.get("passed"),
+        l35.get("implied_monthly_income", 0),
+        len(l35.get("flags", [])),
+        len(l35.get("suggested_questions", [])),
+    )
+
+    layers = {
+        "deepfake": l1,
+        "authenticity": l2,
+        "consistency": l3,
+        "income_plausibility": l35,
+    }
+
+    # ------------------------------------------------------------------
+    # Layer 4 — Critical-thinking reasoner
+    # ------------------------------------------------------------------
+    logger.info("Layer 4: reasoner")
+    reasoning = run_reasoner(layers, user_ctx, answers=[])
+    logger.info("Reasoner verdict=%s risk=%.2f questions=%d",
+                reasoning.get("verdict"),
+                reasoning.get("risk_score", 0),
+                len(reasoning.get("questions", [])))
+
+    verdict = reasoning.get("verdict", "approved")
+
+    # Run anomaly detector even on needs_review so the UI gets full context;
+    # only skip on outright rejection.
+    if verdict == "rejected":
+        return _verification_failed_with_reasoning(
+            "reasoner", layers, transactions, user_ctx, reasoning,
+        )
+
     anomalies = detect_anomalies(transactions, user_ctx)
-    logger.info("Anomaly detector: score=%.2f flagged=%s", anomalies.get("anomaly_score", 0), anomalies.get("flagged"))
+    logger.info("Anomaly detector: score=%.2f flagged=%s",
+                anomalies.get("anomaly_score", 0), anomalies.get("flagged"))
 
     return StatementProcessResponse(
         extraction={"transactions": transactions},
         verification={
-            "passed": True,
+            "passed": verdict == "approved",
+            "verdict": verdict,
             "failed_layer": None,
-            "layers": {
-                "deepfake": l1,
-                "authenticity": l2,
-                "consistency": l3,
-            },
+            "layers": layers,
         },
         anomalies=anomalies,
+        reasoning=reasoning,
+    )
+
+
+@router.post("/reanalyze", response_model=StatementProcessResponse)
+async def reanalyze_statement(req: StatementReanalyzeRequest) -> StatementProcessResponse:
+    """Re-run L3.5 + L4 with new user answers. L1-L3 are reused as-is."""
+    user_ctx = req.userContext.model_dump()
+
+    merged_answers = [
+        {"question_id": a.question_id, "value": a.value}
+        for a in (req.previousAnswers + req.newAnswers)
+    ]
+
+    # Re-run only the layers that depend on user answers
+    l35 = check_income_plausibility(req.transactions, user_ctx, answers=merged_answers)
+
+    layers = dict(req.layers)
+    layers["income_plausibility"] = l35
+
+    reasoning = run_reasoner(layers, user_ctx, answers=merged_answers)
+    verdict = reasoning.get("verdict", "approved")
+
+    if verdict == "rejected":
+        return _verification_failed_with_reasoning(
+            "reasoner", layers, req.transactions, user_ctx, reasoning,
+        )
+
+    anomalies = detect_anomalies(req.transactions, user_ctx)
+
+    return StatementProcessResponse(
+        extraction={"transactions": req.transactions},
+        verification={
+            "passed": verdict == "approved",
+            "verdict": verdict,
+            "failed_layer": None,
+            "layers": layers,
+        },
+        anomalies=anomalies,
+        reasoning=reasoning,
     )
 
 
@@ -182,7 +280,6 @@ def _download_file(storage_path: str, settings: Any) -> bytes | None:
         response = client.storage.from_(bucket).download(storage_path)
         return response
     except ImportError:
-        # supabase-py not installed — try direct HTTP download
         return _download_via_http(storage_path, settings)
     except Exception as exc:
         logger.error("Storage download failed: %s", exc)
@@ -190,7 +287,6 @@ def _download_file(storage_path: str, settings: Any) -> bytes | None:
 
 
 def _download_via_http(storage_path: str, settings: Any) -> bytes | None:
-    """Fallback: download via Supabase Storage REST API."""
     try:
         import httpx
 
@@ -231,35 +327,111 @@ def _verification_failed(
     failed_layer: str,
     l1: dict[str, Any],
     transactions: list[dict[str, Any]],
+    user_ctx: dict[str, Any],
     l2: dict[str, Any] | None = None,
     l3: dict[str, Any] | None = None,
+) -> StatementProcessResponse:
+    """Used when L1/L2/L3 fail before income/reasoner can run."""
+    layers = {
+        "deepfake": l1,
+        "authenticity": l2 or _placeholder_authenticity(),
+        "consistency": l3 or _placeholder_consistency(),
+        "income_plausibility": _placeholder_income(),
+    }
+    # Run the reasoner anyway so the UI gets a narrative on failure
+    try:
+        reasoning = run_reasoner(layers, user_ctx, answers=[])
+        # Force verdict to rejected when an early layer hard-failed
+        reasoning["verdict"] = "rejected"
+    except Exception:
+        reasoning = {
+            "risk_score": 1.0,
+            "verdict": "rejected",
+            "reasoning_summary": f"Verification failed at layer: {failed_layer}.",
+            "per_flag_explanations": [],
+            "questions": [],
+        }
+    return StatementProcessResponse(
+        extraction={"transactions": []},
+        verification={
+            "passed": False,
+            "verdict": "rejected",
+            "failed_layer": failed_layer,
+            "layers": layers,
+        },
+        anomalies={"anomaly_score": 0.0, "flagged": False, "signals": []},
+        reasoning=reasoning,
+    )
+
+
+def _verification_failed_with_reasoning(
+    failed_layer: str,
+    layers: dict[str, Any],
+    transactions: list[dict[str, Any]],
+    user_ctx: dict[str, Any],
+    reasoning: dict[str, Any],
 ) -> StatementProcessResponse:
     return StatementProcessResponse(
         extraction={"transactions": []},
         verification={
             "passed": False,
+            "verdict": "rejected",
             "failed_layer": failed_layer,
-            "layers": {
-                "deepfake": l1,
-                "authenticity": l2 or {"passed": True, "score": 1.0, "failed_rules": []},
-                "consistency": l3 or {"passed": True, "coherence_score": 1.0, "flags": [], "web_checks": []},
-            },
+            "layers": layers,
         },
         anomalies={"anomaly_score": 0.0, "flagged": False, "signals": []},
+        reasoning=reasoning,
     )
 
 
 def _error_response(message: str) -> StatementProcessResponse:
+    layers = {
+        "deepfake": {"passed": False, "score": 0.0, "risk_score": 1.0, "confidence": 0.0,
+                     "signals": [{"type": "extraction_error", "severity": "critical",
+                                  "detail": message, "evidence": {}, "source": "orchestrator"}],
+                     "reasoning": message},
+        "authenticity": _placeholder_authenticity(),
+        "consistency": _placeholder_consistency(),
+        "income_plausibility": _placeholder_income(),
+    }
     return StatementProcessResponse(
         extraction={"transactions": []},
         verification={
             "passed": False,
+            "verdict": "rejected",
             "failed_layer": "extraction",
-            "layers": {
-                "deepfake": {"passed": False, "confidence": 0.0, "signals": [message]},
-                "authenticity": {"passed": False, "score": 0.0, "failed_rules": [message]},
-                "consistency": {"passed": False, "coherence_score": 0.0, "flags": [], "web_checks": []},
-            },
+            "layers": layers,
         },
         anomalies={"anomaly_score": 0.0, "flagged": False, "signals": []},
+        reasoning={
+            "risk_score": 1.0,
+            "verdict": "rejected",
+            "reasoning_summary": message,
+            "per_flag_explanations": [],
+            "questions": [],
+        },
     )
+
+
+def _placeholder_authenticity() -> dict[str, Any]:
+    return {"passed": True, "score": 1.0, "failed_rules": []}
+
+
+def _placeholder_consistency() -> dict[str, Any]:
+    return {"passed": True, "coherence_score": 1.0, "flags": [], "web_checks": []}
+
+
+def _placeholder_income() -> dict[str, Any]:
+    return {
+        "passed": True,
+        "implied_monthly_income": 0.0,
+        "local_band": {"p25": 0, "p50": 0, "p75": 0, "currency": "TND", "source": "skipped"},
+        "remote_band": {"p25": 0, "p50": 0, "p75": 0, "currency": "TND", "source": "skipped"},
+        "gap_local_pct": 0.0,
+        "gap_remote_pct": 0.0,
+        "primary_band": "local",
+        "foreign_currency_share": 0.0,
+        "flags": [],
+        "suggested_questions": [],
+        "reasoning": "Layer skipped — earlier layer failed.",
+    }
