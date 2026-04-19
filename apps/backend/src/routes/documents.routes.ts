@@ -92,11 +92,10 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res) => {
 
   // Derive extension from MIME
   const ext = mimeToExt(mimetype);
-  const storageKey = `statements/${userId}/${crypto.randomUUID()}.${ext}`;
+  const storageKey = `${userId}/${crypto.randomUUID()}.${ext}`;
 
-  // Upload to Supabase Storage
   const { error: storageErr } = await supabaseAdmin.storage
-    .from('statements')
+    .from('bank-statements')
     .upload(storageKey, buffer, { contentType: mimetype, upsert: false });
 
   if (storageErr) {
@@ -126,8 +125,8 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res) => {
   // Respond immediately — processing is async
   res.status(202).json({ id: row.id, status: 'processing' });
 
-  // Background: run pipeline
-  void runPipeline(userId, row.id, storageKey, mimetype);
+  // Background: run pipeline (pass buffer so the ML service skips storage download)
+  void runPipeline(userId, row.id, storageKey, mimetype, buffer);
 });
 
 // ---------------------------------------------------------------------------
@@ -150,7 +149,7 @@ documentsRouter.delete('/:id', async (req, res) => {
   }
 
   // Delete from storage (best-effort)
-  await supabaseAdmin.storage.from('statements').remove([row.storage_path]);
+  await supabaseAdmin.storage.from('bank-statements').remove([row.storage_path]);
 
   const { error } = await supabaseAdmin
     .from('bank_statements')
@@ -174,6 +173,7 @@ async function runPipeline(
   statementId: string,
   storagePath: string,
   mimeType: string,
+  fileBuffer: Buffer,
 ): Promise<void> {
   try {
     // Fetch user context for the ML service
@@ -210,8 +210,8 @@ async function runPipeline(
       })),
     };
 
-    // Call ML service — full 3-layer pipeline
-    const result = await ml.statementProcess(storagePath, mimeType, userContext);
+    // Call ML service — full 3-layer pipeline (file bytes sent directly, no storage re-download)
+    const result = await ml.statementProcess(storagePath, mimeType, userContext, fileBuffer);
 
     const { extraction, verification, anomalies } = result;
     const passed = verification.passed;

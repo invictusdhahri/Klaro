@@ -39,8 +39,19 @@ function clientIp(req: Parameters<typeof audit>[0] extends never ? never : impor
   return req.socket.remoteAddress ?? undefined;
 }
 
-kycRouter.get('/status', (req, res) => {
-  res.json({ userId: req.user!.id, status: 'pending' });
+kycRouter.get('/status', async (req, res, next) => {
+  const userId = req.user!.id;
+  try {
+    const { supabaseAdmin } = await import('../services/supabase');
+    const { data } = await supabaseAdmin
+      .from('profiles')
+      .select('kyc_status')
+      .eq('id', userId)
+      .single();
+    res.json({ userId, status: (data as { kyc_status?: string } | null)?.kyc_status ?? 'pending' });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ── POST /upload ──────────────────────────────────────────────────────────────

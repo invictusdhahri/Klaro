@@ -66,8 +66,9 @@ def check_data_sufficiency(user_data: dict[str, Any]) -> float:
             f"to evaluate income stability (have {len(credits)})"
         )
 
-    # Requirement 4: at least one bank connection (scraping or manual upload)
-    has_connection = bool(bank_connections)
+    # Requirement 4: at least one bank connection OR processed bank statement
+    bank_statements: list[dict[str, Any]] = user_data.get("bank_statements") or []
+    has_connection = bool(bank_connections) or bool(bank_statements)
     if not has_connection:
         gaps.append(
             "No bank connection found — connect a bank account (Attijari, BIAT, STB, BNA) "

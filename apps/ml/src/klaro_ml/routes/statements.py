@@ -65,6 +65,7 @@ class StatementProcessRequest(BaseModel):
     storagePath: str
     mimeType: str
     userContext: UserContext
+    fileBytes: str | None = None  # base64-encoded; if provided, storage download is skipped
 
 
 class StatementProcessResponse(BaseModel):
@@ -81,8 +82,13 @@ class StatementProcessResponse(BaseModel):
 async def process_statement(req: StatementProcessRequest) -> StatementProcessResponse:
     settings = get_settings()
 
-    # Download file from Supabase Storage
-    file_bytes = _download_file(req.storagePath, settings)
+    # Download file — use inline bytes if the backend passed them, otherwise fetch from storage
+    if req.fileBytes:
+        import base64 as _b64
+        file_bytes = _b64.b64decode(req.fileBytes)
+    else:
+        file_bytes = _download_file(req.storagePath, settings)
+
     if file_bytes is None:
         logger.error("Failed to download file: %s", req.storagePath)
         return _error_response("Could not download file from storage")
@@ -172,7 +178,7 @@ def _download_file(storage_path: str, settings: Any) -> bytes | None:
             return None
 
         client = create_client(supabase_url, supabase_key)
-        bucket = "statements"
+        bucket = "bank-statements"
         response = client.storage.from_(bucket).download(storage_path)
         return response
     except ImportError:
@@ -194,7 +200,7 @@ def _download_via_http(storage_path: str, settings: Any) -> bytes | None:
         if not supabase_url or not supabase_key:
             return None
 
-        url = f"{supabase_url}/storage/v1/object/statements/{storage_path}"
+        url = f"{supabase_url}/storage/v1/object/bank-statements/{storage_path}"
         resp = httpx.get(
             url,
             headers={"Authorization": f"Bearer {supabase_key}", "apikey": supabase_key},

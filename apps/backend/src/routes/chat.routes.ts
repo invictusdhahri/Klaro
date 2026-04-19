@@ -297,6 +297,8 @@ chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, 
     const effectiveMode = mode !== 'general' ? mode : detectedMode;
     let fullContent = '';
 
+    let streamErrored = false;
+
     const stream = anthropic.messages.stream({
       model: CLAUDE_SONNET,
       max_tokens: 1024,
@@ -310,23 +312,28 @@ chatRouter.get('/stream', validate(chatStreamQuerySchema, 'query'), async (req, 
     });
 
     stream.on('error', (err) => {
+      streamErrored = true;
       logger.error({ err, userId }, 'chat stream error');
-      sendEvent({ type: 'error', error: 'Stream error. Please try again.' });
+      sendEvent({ type: 'error', error: 'Something went wrong while generating a response. Please try again.' });
+      sendEvent({ type: 'done' });
+      res.end();
     });
 
     await stream.finalMessage();
 
-    sendEvent({ type: 'done', mode: effectiveMode });
-    res.end();
+    if (!streamErrored) {
+      sendEvent({ type: 'done', mode: effectiveMode });
+      res.end();
 
-    // Persist after stream completes — non-blocking.
-    Promise.all([
-      persistMessage(userId, 'user', message),
-      persistMessage(userId, 'assistant', fullContent, { mode: effectiveMode, streamed: true }),
-    ]).catch((err) => logger.warn({ err, userId }, 'chat persist after stream failed'));
+      // Persist after stream completes — non-blocking.
+      Promise.all([
+        persistMessage(userId, 'user', message),
+        persistMessage(userId, 'assistant', fullContent, { mode: effectiveMode, streamed: true }),
+      ]).catch((err) => logger.warn({ err, userId }, 'chat persist after stream failed'));
+    }
   } catch (err) {
     logger.error({ err, userId }, 'chat stream setup failed');
-    sendEvent({ type: 'error', error: 'Failed to start stream. Please try again.' });
+    sendEvent({ type: 'error', error: 'Failed to reach the AI advisor. Please try again.' });
     sendEvent({ type: 'done' });
     res.end();
   }

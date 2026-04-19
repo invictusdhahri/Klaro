@@ -21,10 +21,6 @@ class Settings(BaseSettings):
     CLAUDE_HAIKU: str = "claude-haiku-4-5-20251001"
     CLAUDE_SONNET: str = "claude-sonnet-4-6"
 
-    # Supabase — needed to download files from Storage in the ML service
-    SUPABASE_URL: str | None = None
-    SUPABASE_SERVICE_ROLE_KEY: str | None = None
-
     # Tavily Search API — optional, used by Layer 3 consistency check
     # If not set, web search calls are skipped gracefully.
     TAVILY_API_KEY: str | None = None

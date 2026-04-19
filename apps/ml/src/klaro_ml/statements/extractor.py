@@ -39,6 +39,14 @@ Extract ALL transactions visible in the document and return ONLY valid JSON in t
 
 Rules:
 - Amounts are always positive; use "type" to indicate direction.
+- NUMBER FORMAT: Tunisian bank statements use French formatting. Two common styles:
+    Style A (comma-decimal):  "1 200,000" = 1200.000 TND | "342,800" = 342.800 TND | "87,500" = 87.500 TND
+    Style B (period-decimal): "1 200.000" = 1200.000 TND | "342.800" = 342.800 TND | "87.500" = 87.500 TND
+  In both styles a SPACE separates thousands from hundreds. A single comma or period at the end
+  is always the DECIMAL mark, not a thousands separator.
+  NEVER interpret "100,000" as one-hundred-thousand; it means 100.000 (one hundred dinars).
+  NEVER split a number with a space into two separate values.
+- Dashes (— or -) in debit or credit columns mean the column is empty (zero / not applicable).
 - If a date is ambiguous, prefer DD/MM/YYYY then MM/DD/YYYY.
 - If no transactions are visible, return {"transactions": []}.
 - Output ONLY the JSON object, no markdown fences, no explanations.

@@ -92,6 +92,15 @@ def fetch_user_data(user_id: str) -> dict[str, Any]:
         .data
         or []
     )
+    bank_statements = (
+        sb.table("bank_statements")
+        .select("id, status, extracted_count, created_at")
+        .eq("user_id", user_id)
+        .eq("status", "processed")
+        .execute()
+        .data
+        or []
+    )
 
     return {
         "user_id": user_id,
@@ -99,6 +108,7 @@ def fetch_user_data(user_id: str) -> dict[str, Any]:
         "profile": profile,
         "bank_connections": bank_connections,
         "kyc_documents": kyc_documents,
+        "bank_statements": bank_statements,
     }
 
 

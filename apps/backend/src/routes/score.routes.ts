@@ -49,14 +49,18 @@ scoreRouter.post('/calculate', async (req, res) => {
     });
   }
 
-  // Guard: must have at least one bank connection
-  const { data: connections } = await sb
-    .from('bank_connections')
-    .select('id')
-    .eq('user_id', userId)
-    .limit(1);
+  // Guard: must have at least one bank connection OR a successfully processed bank statement
+  const [{ data: connections }, { data: statements }] = await Promise.all([
+    sb.from('bank_connections').select('id').eq('user_id', userId).limit(1),
+    sb
+      .from('bank_statements')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'processed')
+      .limit(1),
+  ]);
 
-  if (!connections?.length) {
+  if (!connections?.length && !statements?.length) {
     return res.status(422).json({
       error: 'Connect a bank account or upload bank statements before scoring',
       suggestions: [
@@ -71,10 +75,17 @@ scoreRouter.post('/calculate', async (req, res) => {
     return res.json(result);
   } catch (err) {
     if (err instanceof MLError) {
-      // Forward INSUFFICIENT_DATA 422 from ML service directly to client
+      // Forward INSUFFICIENT_DATA 422 from ML service directly to client.
+      // The ML service wraps errors in { detail: { ... } } — normalise to { error, ... }.
       if (err.statusCode === 422) {
         try {
-          return res.status(422).json(JSON.parse(err.body));
+          const parsed = JSON.parse(err.body);
+          const detail = parsed?.detail ?? parsed;
+          return res.status(422).json({
+            error: detail?.message ?? detail?.error ?? 'Not enough data to generate a score.',
+            data_gaps: detail?.data_gaps,
+            suggestions: detail?.suggestions,
+          });
         } catch {
           return res.status(422).json({ error: err.body });
         }

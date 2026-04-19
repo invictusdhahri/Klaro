@@ -307,6 +307,9 @@ export default function DocumentsPage() {
     void fetchStatements();
   }, [fetchStatements]);
 
+  // Start/stop polling whenever the processing-row count changes.
+  // The cleanup lives in a separate unmount-only effect so it never
+  // fires between re-renders and kills the interval prematurely.
   useEffect(() => {
     const hasProcessing = statements.some((s) => s.status === 'processing' || s.status === 'pending');
     if (hasProcessing && !pollingRef.current) {
@@ -315,10 +318,17 @@ export default function DocumentsPage() {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
   }, [statements, fetchStatements]);
+
+  // Unmount-only cleanup — never fires between re-renders.
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Upload

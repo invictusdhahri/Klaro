@@ -215,6 +215,16 @@ export const ml = {
     call<LivenessResult>('/kyc/liveness', { frames, client_signals: clientSignals }),
   faceMatch: (selfie_base64: string, doc_face_base64: string) =>
     call<FaceMatchResult>('/kyc/face-match', { selfie_base64, doc_face_base64 }),
-  statementProcess: (storagePath: string, mimeType: string, userContext: UserContext) =>
-    call<StatementProcessResult>('/statements/process', { storagePath, mimeType, userContext }),
+  statementProcess: (
+    storagePath: string,
+    mimeType: string,
+    userContext: UserContext,
+    fileBuffer?: Buffer,
+  ) =>
+    call<StatementProcessResult>('/statements/process', {
+      storagePath,
+      mimeType,
+      userContext,
+      fileBytes: fileBuffer ? fileBuffer.toString('base64') : undefined,
+    }),
 };

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScoreGauge } from '@/components/score/score-gauge';
@@ -75,21 +76,38 @@ export function ScoreDashboardClient({ initialScore, userId }: Props) {
   }, []);
 
   if (!scoreRow) {
+    const needsBankData =
+      error?.toLowerCase().includes('bank') || error?.toLowerCase().includes('statement');
+
     return (
       <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>No score yet</CardTitle>
             <CardDescription>
-              Complete KYC verification and connect a bank account to generate your first Klaro
-              score.
+              Complete KYC verification and connect a bank account or upload your statements to
+              generate your first Klaro score.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {error && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </p>
+              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <p>{error}</p>
+                {needsBankData && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Link href="/documents">
+                      <Button size="sm" variant="outline">
+                        Upload statements
+                      </Button>
+                    </Link>
+                    <Link href="/connect-bank">
+                      <Button size="sm" variant="outline">
+                        Connect a bank
+                      </Button>
+                    </Link>
+                  </div>
+                )}
+              </div>
             )}
             <Button onClick={handleCalculate} disabled={calculating}>
               {calculating ? 'Calculating…' : 'Generate my Klaro score'}
