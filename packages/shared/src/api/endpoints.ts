@@ -16,6 +16,7 @@ export const API_ENDPOINTS = {
     start: '/api/scrape/start',
     status: (jobId: string) => `/api/scrape/status/${jobId}`,
     cancel: (jobId: string) => `/api/scrape/cancel/${jobId}`,
+    submitOtp: (jobId: string) => `/api/scrape/otp/${jobId}`,
   },
 
   score: {

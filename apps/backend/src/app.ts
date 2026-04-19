@@ -27,7 +27,9 @@ export function createApp(): Express {
   app.use(
     cors({
       origin: (origin, cb) => {
-        if (!origin || env.CORS_ORIGINS.includes(origin)) {
+        const normalizedOrigin = origin?.replace(/\/$/, '');
+        const allowed = env.CORS_ORIGINS.map((o) => o.replace(/\/$/, ''));
+        if (!origin || allowed.includes(normalizedOrigin!)) {
           cb(null, true);
         } else {
           cb(new Error(`CORS: origin not allowed: ${origin}`));

@@ -12,6 +12,10 @@ export const bankConnectionStartSchema = z.object({
   encryptedCredentials: z.string().min(1).optional(),
 });
 
+export const otpSubmitSchema = z.object({
+  otp: z.string().min(4).max(10),
+});
+
 export const bankConsentUpdateSchema = z.object({
   bankId: z.string().uuid(),
   consentGranted: z.boolean(),
@@ -20,3 +24,4 @@ export const bankConsentUpdateSchema = z.object({
 
 export type BankConnectionStartInput = z.infer<typeof bankConnectionStartSchema>;
 export type BankConsentUpdateInput = z.infer<typeof bankConsentUpdateSchema>;
+export type OtpSubmitInput = z.infer<typeof otpSubmitSchema>;

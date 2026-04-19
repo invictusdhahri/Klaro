@@ -4,6 +4,10 @@ export interface BankCredentials {
   username: string;
   password: string;
   otp?: string;
+  /** Called when the bank portal requires a one-time code; resolves with the user-supplied OTP. */
+  otpProvider?: () => Promise<string>;
+  /** Supabase user id — used by adapters that upload downloaded statements directly. */
+  userId?: string;
 }
 
 export interface BankBalance {

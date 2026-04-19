@@ -9,11 +9,19 @@ export interface BankInfo {
 
 export const TUNISIAN_BANKS: readonly BankInfo[] = [
   {
+    id: 'ubci',
+    name: 'Union Bancaire pour le Commerce et l\'Industrie',
+    shortName: 'UBCI',
+    loginUrl: 'https://ubank.com.tn/?page=login-form',
+    supported: true,
+    logoSlug: 'ubci',
+  },
+  {
     id: 'attijari',
     name: 'Attijari Bank',
     shortName: 'Attijari',
     loginUrl: 'https://www.attijaribank.com.tn/espace-client',
-    supported: true,
+    supported: false,
     logoSlug: 'attijari',
   },
   {
@@ -21,7 +29,7 @@ export const TUNISIAN_BANKS: readonly BankInfo[] = [
     name: 'Société Tunisienne de Banque',
     shortName: 'STB',
     loginUrl: 'https://www.stb.com.tn/',
-    supported: true,
+    supported: false,
     logoSlug: 'stb',
   },
   {
@@ -29,7 +37,7 @@ export const TUNISIAN_BANKS: readonly BankInfo[] = [
     name: 'Banque Internationale Arabe de Tunisie',
     shortName: 'BIAT',
     loginUrl: 'https://www.biat.com.tn/',
-    supported: true,
+    supported: false,
     logoSlug: 'biat',
   },
   {

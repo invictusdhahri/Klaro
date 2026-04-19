@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { Router } from 'express';
 import multer from 'multer';
 import type { Json } from '@klaro/shared';
@@ -10,6 +9,7 @@ import {
   type StatementProcessResult,
   type UserContext,
 } from '../services/ml.client';
+import { uploadAndProcessStatement } from '../services/statement.service';
 import { logger } from '../lib/logger';
 import { audit } from '../services/audit.service';
 
@@ -83,58 +83,16 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res) => {
 
   const { buffer, originalname, mimetype } = req.file;
 
-  // sha-256 fingerprint for dedup
-  const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
-
-  // Check for duplicate
-  const { data: existing } = await supabaseAdmin
-    .from('bank_statements')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('file_hash', fileHash)
-    .maybeSingle();
-
-  if (existing) {
-    return res.status(409).json({ error: 'This file has already been uploaded', id: existing.id });
+  try {
+    const { id, status } = await uploadAndProcessStatement(userId, buffer, originalname, mimetype);
+    if (status === 'duplicate') {
+      return res.status(409).json({ error: 'This file has already been uploaded', id });
+    }
+    return res.status(202).json({ id, status: 'processing' });
+  } catch (err) {
+    logger.error({ err, userId }, 'document upload failed');
+    return res.status(500).json({ error: err instanceof Error ? err.message : 'Upload failed' });
   }
-
-  // Derive extension from MIME
-  const ext = mimeToExt(mimetype);
-  const storageKey = `${userId}/${crypto.randomUUID()}.${ext}`;
-
-  const { error: storageErr } = await supabaseAdmin.storage
-    .from('bank-statements')
-    .upload(storageKey, buffer, { contentType: mimetype, upsert: false });
-
-  if (storageErr) {
-    logger.error({ err: storageErr, userId }, 'statement storage upload failed');
-    return res.status(500).json({ error: 'Storage upload failed' });
-  }
-
-  // Insert DB row
-  const { data: row, error: insertErr } = await supabaseAdmin
-    .from('bank_statements')
-    .insert({
-      user_id: userId,
-      file_name: originalname,
-      mime_type: mimetype,
-      storage_path: storageKey,
-      file_hash: fileHash,
-      status: 'processing',
-    })
-    .select('id')
-    .single();
-
-  if (insertErr || !row) {
-    logger.error({ err: insertErr, userId }, 'bank_statements insert failed');
-    return res.status(500).json({ error: 'Failed to create document record' });
-  }
-
-  // Respond immediately — processing is async
-  res.status(202).json({ id: row.id, status: 'processing' });
-
-  // Background: run pipeline (pass buffer so the ML service skips storage download)
-  void runPipeline(userId, row.id, storageKey, mimetype, buffer);
 });
 
 // ---------------------------------------------------------------------------
@@ -188,10 +146,7 @@ async function buildUserContext(userId: string, statementId: string): Promise<Us
   const [profileRes, kycRes, priorStatementsRes] = await Promise.all([
     supabaseAdmin
       .from('profiles')
-      .select(
-        'full_name, occupation, occupation_category, education_level, date_of_birth, ' +
-        'kyc_status, location_governorate, location_country, profile_context',
-      )
+      .select('full_name, occupation, occupation_category, education_level, date_of_birth, kyc_status, location_governorate, location_country, profile_context')
       .eq('id', userId)
       .single(),
     supabaseAdmin
@@ -283,7 +238,7 @@ async function enrichProfileFromAnswers(
 
   await supabaseAdmin
     .from('profiles')
-    .update({ profile_context: contextUpdates, ...profileFieldUpdates })
+    .update({ profile_context: contextUpdates as import('@klaro/shared').Json, ...profileFieldUpdates })
     .eq('id', userId);
 }
 

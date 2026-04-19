@@ -264,6 +264,51 @@ export type Database = {
           },
         ]
       }
+      chat_messages: {
+        Row: {
+          content: string
+          context_snapshot: Json | null
+          created_at: string
+          id: string
+          role: string
+          session_id: string | null
+          user_id: string
+        }
+        Insert: {
+          content: string
+          context_snapshot?: Json | null
+          created_at?: string
+          id?: string
+          role: string
+          session_id?: string | null
+          user_id: string
+        }
+        Update: {
+          content?: string
+          context_snapshot?: Json | null
+          created_at?: string
+          id?: string
+          role?: string
+          session_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "chat_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_sessions: {
         Row: {
           archived_at: string | null
@@ -304,51 +349,6 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      chat_messages: {
-        Row: {
-          content: string
-          context_snapshot: Json | null
-          created_at: string
-          id: string
-          role: string
-          session_id: string | null
-          user_id: string
-        }
-        Insert: {
-          content: string
-          context_snapshot?: Json | null
-          created_at?: string
-          id?: string
-          role: string
-          session_id?: string | null
-          user_id: string
-        }
-        Update: {
-          content?: string
-          context_snapshot?: Json | null
-          created_at?: string
-          id?: string
-          role?: string
-          session_id?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "chat_messages_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "chat_messages_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "chat_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -475,6 +475,7 @@ export type Database = {
           occupation: string | null
           occupation_category: string | null
           phone: string | null
+          profile_context: Json
           updated_at: string
         }
         Insert: {
@@ -489,6 +490,7 @@ export type Database = {
           occupation?: string | null
           occupation_category?: string | null
           phone?: string | null
+          profile_context?: Json
           updated_at?: string
         }
         Update: {
@@ -503,6 +505,7 @@ export type Database = {
           occupation?: string | null
           occupation_category?: string | null
           phone?: string | null
+          profile_context?: Json
           updated_at?: string
         }
         Relationships: []
@@ -607,17 +610,17 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "user_memories_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "user_memories_source_session_id_fkey"
             columns: ["source_session_id"]
             isOneToOne: false
             referencedRelation: "chat_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_memories_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
