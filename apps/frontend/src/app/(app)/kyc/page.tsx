@@ -1,7 +1,27 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+'use client';
+
+import * as React from 'react';
+import { useRouter } from 'next/navigation';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { IdUploadStep } from '@/components/kyc/id-upload-step';
+
+const KYC_FACE_CROP_KEY = 'klaro.kyc.face_crop';
+const KYC_DOC_ID_KEY    = 'klaro.kyc.doc_id';
 
 export default function KycPage() {
+  const router = useRouter();
+  const [step1Done, setStep1Done] = React.useState(false);
+
+  const handleStep1Success = React.useCallback(
+    (result: { face_crop_base64: string; doc_id?: string }) => {
+      sessionStorage.setItem(KYC_FACE_CROP_KEY, result.face_crop_base64);
+      if (result.doc_id) sessionStorage.setItem(KYC_DOC_ID_KEY, result.doc_id);
+      setStep1Done(true);
+    },
+    [],
+  );
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -18,22 +38,28 @@ export default function KycPage() {
           <CardDescription>CIN, passport, or driver license</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button>Upload document</Button>
+          <IdUploadStep onSuccess={handleStep1Success} />
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className={step1Done ? undefined : 'opacity-50 pointer-events-none'}>
         <CardHeader>
-          <CardTitle>Step 2 — Take a selfie</CardTitle>
-          <CardDescription>Live liveness check (blink + head rotation)</CardDescription>
+          <CardTitle>Step 2 — Liveness check</CardTitle>
+          <CardDescription>Live blink + head rotation — takes about 5 seconds</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Button variant="outline" disabled>
-            Start camera
+        <CardContent className="space-y-2">
+          <Button
+            variant="outline"
+            disabled={!step1Done}
+            onClick={() => router.push('/kyc/liveness')}
+          >
+            Start liveness check
           </Button>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Camera flow will be wired once the ML sidecar is connected.
-          </p>
+          {!step1Done && (
+            <p className="text-xs text-muted-foreground">
+              Complete Step 1 first to unlock the liveness check.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
