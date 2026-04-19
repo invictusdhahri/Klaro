@@ -70,6 +70,82 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+// ---------------------------------------------------------------------------
+// Statement processing types
+// ---------------------------------------------------------------------------
+
+export interface RawTransaction {
+  date: string;
+  description: string;
+  amount: number;
+  type: 'credit' | 'debit';
+  category?: string;
+}
+
+export interface CoherenceFlag {
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  detail: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface AnomalySignal {
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  detail: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface LayerDeepfake {
+  passed: boolean;
+  confidence: number;
+  signals: string[];
+}
+
+export interface LayerAuthenticity {
+  passed: boolean;
+  score: number;
+  failed_rules: string[];
+}
+
+export interface LayerConsistency {
+  passed: boolean;
+  coherence_score: number;
+  flags: CoherenceFlag[];
+  web_checks: Array<{ query: string; finding: string; passed: boolean }>;
+}
+
+export interface StatementVerification {
+  passed: boolean;
+  failed_layer: 'deepfake' | 'authenticity' | 'consistency' | null;
+  layers: {
+    deepfake: LayerDeepfake;
+    authenticity: LayerAuthenticity;
+    consistency: LayerConsistency;
+  };
+}
+
+export interface StatementAnomalies {
+  anomaly_score: number;
+  flagged: boolean;
+  signals: AnomalySignal[];
+}
+
+export interface StatementProcessResult {
+  extraction: { transactions: RawTransaction[] };
+  verification: StatementVerification;
+  anomalies: StatementAnomalies;
+}
+
+export interface UserContext {
+  fullName: string;
+  occupationCategory: string | null;
+  kycStatus: string;
+  locationGovernorate: string | null;
+  kycDocuments: Array<{ type: string; status: string }>;
+  priorStatements: Array<{ fileName: string; uploadedAt: string }>;
+}
+
 async function callMultipart<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${env.ML_BASE_URL}${path}`, {
     method: 'POST',
@@ -102,4 +178,6 @@ export const ml = {
     call<LivenessResult>('/kyc/liveness', { frames, client_signals: clientSignals }),
   faceMatch: (selfie_base64: string, doc_face_base64: string) =>
     call<FaceMatchResult>('/kyc/face-match', { selfie_base64, doc_face_base64 }),
+  statementProcess: (storagePath: string, mimeType: string, userContext: UserContext) =>
+    call<StatementProcessResult>('/statements/process', { storagePath, mimeType, userContext }),
 };

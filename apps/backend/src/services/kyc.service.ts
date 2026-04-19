@@ -7,8 +7,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import type { Database, Json, OccupationCategory } from '@klaro/shared';
 import { supabaseAdmin } from './supabase';
-import type { OccupationCategory } from '@klaro/shared';
+
+type ProfileUpdate = Database['public']['Tables']['profiles']['Update'];
 
 // ── Extracted fields shape (matches vision_extractor output) ──────────────────
 
@@ -102,7 +104,7 @@ export async function saveKycDocument(
         user_id: userId,
         document_type: documentType as 'cin' | 'passport' | 'driver_license' | 'proof_of_address',
         storage_path: `kyc/${userId}/${hash}`,   // logical path — no actual upload yet
-        ocr_data: ocrData as unknown as Record<string, unknown>,
+        ocr_data: ocrData as unknown as Json,
         authenticity_score: quality_score,
         consistency_score: confidence,
         verification_status: 'pending' as const,
@@ -133,7 +135,7 @@ export async function completeKyc(
   const { error: docErr } = await supabaseAdmin
     .from('kyc_documents')
     .update({
-      verification_status: 'verified',
+      verification_status: 'verified' as const,
       authenticity_score: faceMatchSimilarity,
     })
     .eq('id', docId)
@@ -145,7 +147,7 @@ export async function completeKyc(
   const governorate = extractGovernorate(ocrData.address ?? ocrData.place_of_birth);
   const occupationCategory = inferOccupationCategory(ocrData.occupation);
 
-  const profileUpdate: Record<string, unknown> = {
+  const profileUpdate: ProfileUpdate = {
     kyc_status: 'verified',
   };
 
@@ -154,9 +156,9 @@ export async function completeKyc(
   if (latin) profileUpdate.full_name = latin;
 
   if (ocrData.date_of_birth) profileUpdate.date_of_birth = ocrData.date_of_birth;
-  if (ocrData.occupation)    profileUpdate.occupation = ocrData.occupation;
-  if (occupationCategory)    profileUpdate.occupation_category = occupationCategory;
-  if (governorate)           profileUpdate.location_governorate = governorate;
+  if (ocrData.occupation) profileUpdate.occupation = ocrData.occupation;
+  if (occupationCategory) profileUpdate.occupation_category = occupationCategory;
+  if (governorate) profileUpdate.location_governorate = governorate;
 
   // 3. Update the profile
   const { error: profErr } = await supabaseAdmin

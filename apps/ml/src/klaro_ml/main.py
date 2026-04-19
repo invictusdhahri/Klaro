@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from klaro_ml.routes import kyc, ocr, score
+from klaro_ml.routes import kyc, ocr, score, statements
 from klaro_ml.settings import get_settings
 
 settings = get_settings()
@@ -35,3 +35,4 @@ def health() -> dict[str, str]:
 app.include_router(score.router, prefix="/score", tags=["score"])
 app.include_router(kyc.router, prefix="/kyc", tags=["kyc"])
 app.include_router(ocr.router, prefix="/ocr", tags=["ocr"])
+app.include_router(statements.router, prefix="/statements", tags=["statements"])

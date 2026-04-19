@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { TUNISIAN_BANKS } from '@klaro/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,7 +42,14 @@ export default function ConnectBankPage() {
           <CardTitle>Prefer to upload statements?</CardTitle>
         </CardHeader>
         <CardContent>
-          <Button variant="outline">Upload PDF / CSV</Button>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Upload PDF statements, images, CSV exports, or payslips. Each file goes through
+            deepfake detection, authenticity checks, and cross-consistency verification before
+            transactions are imported.
+          </p>
+          <Link href="/documents">
+            <Button variant="outline">Upload statement</Button>
+          </Link>
         </CardContent>
       </Card>
     </div>

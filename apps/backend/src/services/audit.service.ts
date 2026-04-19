@@ -6,6 +6,8 @@
  * should never break the caller's response.
  */
 
+import type { Json } from '@klaro/shared';
+
 import { supabaseAdmin } from './supabase';
 
 export type ActorType = 'user' | 'bank' | 'system' | 'admin';
@@ -25,16 +27,15 @@ export interface AuditEvent {
  * to stderr so the caller is never affected.
  */
 export async function audit(event: AuditEvent): Promise<void> {
-  const row: Record<string, unknown> = {
+  const row = {
     actor_type: event.actor_type,
-    actor_id:   event.actor_id,
-    action:     event.action,
+    actor_id: event.actor_id,
+    action: event.action,
+    resource_type: event.resource_type,
+    resource_id: event.resource_id,
+    metadata: event.metadata as Json | undefined,
+    ip_address: event.ip_address,
   };
-
-  if (event.resource_type) row.resource_type = event.resource_type;
-  if (event.resource_id)   row.resource_id   = event.resource_id;
-  if (event.metadata)      row.metadata      = event.metadata;
-  if (event.ip_address)    row.ip_address    = event.ip_address;
 
   const { error } = await supabaseAdmin.from('audit_logs').insert(row);
   if (error) {

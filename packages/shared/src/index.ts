@@ -4,7 +4,7 @@ export * from './types/transaction';
 export * from './types/score';
 export * from './types/bank';
 export * from './types/chat';
-export type { Database } from './types/database';
+export type { Database, Json } from './types/database';
 
 export * from './schemas/user.schema';
 export * from './schemas/kyc.schema';
