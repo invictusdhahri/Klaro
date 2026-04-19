@@ -113,13 +113,21 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res) => {
   }
 
   const { buffer, originalname, mimetype } = req.file;
+  const bankSlugRaw = (req.body?.bankSlug ?? req.query?.bankSlug) as string | undefined;
+  const bankSlug = typeof bankSlugRaw === 'string' && bankSlugRaw.trim() ? bankSlugRaw.trim() : null;
 
   try {
-    const { id, status } = await uploadAndProcessStatement(userId, buffer, originalname, mimetype);
+    const { id, status, bankId } = await uploadAndProcessStatement(
+      userId,
+      buffer,
+      originalname,
+      mimetype,
+      { bankSlug },
+    );
     if (status === 'duplicate') {
-      return res.status(409).json({ error: 'This file has already been uploaded', id });
+      return res.status(409).json({ error: 'This file has already been uploaded', id, bankId });
     }
-    return res.status(202).json({ id, status: 'processing' });
+    return res.status(202).json({ id, status: 'processing', bankId });
   } catch (err) {
     logger.error({ err, userId }, 'document upload failed');
     return res.status(500).json({ error: err instanceof Error ? err.message : 'Upload failed' });
@@ -252,7 +260,7 @@ documentsRouter.post('/:id/answer', async (req, res) => {
   const { data: row, error: rowErr } = await supabaseAdmin
     .from('bank_statements')
     .select(
-      'id, status, verification_report, clarification_answers, clarification_questions',
+      'id, status, bank_id, verification_report, clarification_answers, clarification_questions',
     )
     .eq('id', statementId)
     .eq('user_id', userId)
@@ -341,6 +349,7 @@ documentsRouter.post('/:id/answer', async (req, res) => {
             extraction.transactions.map((tx) => ({
               user_id: userId,
               statement_id: statementId,
+              bank_id: (row.bank_id as string | null) ?? null,
               transaction_date: tx.date,
               amount: tx.amount,
               currency: 'TND',

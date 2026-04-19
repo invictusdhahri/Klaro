@@ -16,7 +16,11 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(10),
 
   ANTHROPIC_API_KEY: z.string().min(10).optional(),
-  ML_BASE_URL: z.string().url().default('http://localhost:8000'),
+  ML_BASE_URL: z
+    .string()
+    .url()
+    .default('http://localhost:8000')
+    .transform((s) => s.replace(/\/+$/, '')),
 
   CREDENTIAL_ENCRYPTION_PUBLIC_KEY: z.string().optional(),
   CREDENTIAL_ENCRYPTION_PRIVATE_KEY: z.string().optional(),

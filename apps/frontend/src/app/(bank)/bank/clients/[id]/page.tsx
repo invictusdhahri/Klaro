@@ -7,6 +7,7 @@ import { ScoreRadar } from '@/components/score/score-radar';
 import { RiskBadge } from '@/components/bank/risk-badge';
 import { ConsentScopeChips } from '@/components/bank/consent-scope-chips';
 import { RequestConsentButton } from '@/components/bank/request-consent-button';
+import { ClientTabs } from '@/components/bank/client-tabs';
 import { API_ENDPOINTS } from '@klaro/shared';
 import type { ScoreBreakdown as ScoreBreakdownType } from '@klaro/shared';
 import { notFound } from 'next/navigation';
@@ -182,6 +183,15 @@ export default async function BankClientDetailPage({ params }: Props) {
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Activity</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ClientTabs clientId={id} />
+            </CardContent>
+          </Card>
         </>
       ) : (
         <Card>

@@ -77,6 +77,27 @@ pnpm dev
 
 Supabase Studio (local): <http://127.0.0.1:54323>
 
+### Bank self-registration
+
+Banks register themselves through the public sign-up page at
+[`/bank/register`](http://localhost:3000/bank/register) (also linked from the
+login page). The form collects:
+
+- **Bank profile** — name, slug, two-letter country code, optional logo URL.
+- **Administrator account** — full name, work email, password.
+
+Submitting the form hits `POST /api/bank/register`, which (atomically, with
+rollback on failure) creates:
+
+1. A row in `public.banks` (the canonical bank organisation).
+2. A Supabase auth user with `app_metadata = { role: 'bank', bank_id }`.
+3. A `public.bank_users` link row with role `admin`.
+
+The administrator is then auto-signed-in and lands on `/bank` (the dashboard).
+Subsequent admins for the same bank can be invited later via Supabase Studio
+or a future invite flow — just add a row to `bank_users` and set the same
+`bank_id` on the new auth user's `app_metadata`.
+
 ### Run via Docker
 
 ```bash
@@ -113,13 +134,13 @@ Root scripts (run with `pnpm <script>`):
 | Surface                | Path                                       |
 | ---------------------- | ------------------------------------------ |
 | Marketing              | `/`                                        |
-| Auth                   | `/login`, `/register`                      |
+| Auth                   | `/login`, `/register`, `/bank/register`    |
 | User app               | `/dashboard`, `/kyc`, `/connect-bank`, `/transactions`, `/documents`, `/chat` |
-| Bank operator console  | `/bank/clients`, `/bank/clients/[id]`      |
+| Bank operator console  | `/bank`, `/bank/clients`, `/bank/clients/[id]` |
 | API health             | `GET http://localhost:4000/health`         |
 | ML health              | `GET http://localhost:8000/health`         |
 
-Bank dashboard is gated by `app_metadata.role = 'bank'` on the Supabase user. Promote a user via the service-role API or Supabase Studio.
+Bank dashboard is gated by `app_metadata.role = 'bank'` plus a non-null `app_metadata.bank_id`. Both fields are populated automatically by the `POST /api/bank/register` flow described above.
 
 ---
 

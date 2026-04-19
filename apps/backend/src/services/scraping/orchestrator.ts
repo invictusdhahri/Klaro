@@ -7,6 +7,7 @@ import { UbciAdapter } from './adapters/ubci';
 import { logger } from '../../lib/logger';
 import { computeAndPersistScore } from '../score.service';
 import { supabaseAdmin } from '../supabase';
+import { bankIdForSlug } from '../bank.resolver';
 
 const REGISTRY: Record<string, () => BankAdapter> = {
   attijari: () => new AttijariAdapter(),
@@ -130,6 +131,30 @@ export async function runScrape(
       adapter.extractBalances(),
     ]);
     log.info({ tx: tx.length, balances: balances.length }, 'scrape complete');
+
+    // Persist a bank_connections row so the bank can see this user via
+    // their dashboard (and so future statement uploads inherit the bank_id).
+    // bankId here is the scraping adapter slug (e.g. 'ubci') which matches
+    // banks.slug — see migration 0013_seed_banks.sql.
+    const resolvedBankId = await bankIdForSlug(bankId);
+    const bankInfo = BANK_BY_ID[bankId];
+    const { error: connErr } = await supabaseAdmin
+      .from('bank_connections')
+      .upsert(
+        {
+          user_id: userId,
+          bank_id: resolvedBankId,
+          bank_name: bankInfo?.name ?? bankId,
+          connection_method: 'scraping',
+          last_sync_at: new Date().toISOString(),
+          sync_status: 'success',
+          account_count: balances.length,
+        },
+        { onConflict: 'user_id, bank_id' },
+      );
+    if (connErr) {
+      log.warn({ err: connErr }, 'bank_connections upsert failed');
+    }
 
     // Auto-trigger score recalculation after successful sync (non-blocking)
     computeAndPersistScore(userId).catch((err) =>

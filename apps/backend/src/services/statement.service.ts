@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { Json } from '@klaro/shared';
 import { supabaseAdmin } from './supabase';
 import { ml, type StatementProcessResult, type UserContext } from './ml.client';
+import { resolveBankIdForUpload } from './bank.resolver';
 import { logger } from '../lib/logger';
 
 function computeAge(dob: string): number | null {
@@ -67,6 +68,16 @@ async function persistStatementPipelineResult(
   statementId: string,
   result: StatementProcessResult,
 ): Promise<void> {
+  // Read the parent statement's bank_id so we can stamp it onto every
+  // transaction row we insert below. This keeps the bank dashboard's
+  // per-bank scoping correct even after re-runs.
+  const { data: parent } = await supabaseAdmin
+    .from('bank_statements')
+    .select('bank_id')
+    .eq('id', statementId)
+    .maybeSingle();
+  const bankId = (parent?.bank_id as string | null) ?? null;
+
   const { extraction, verification, anomalies, reasoning } = result;
   const verdict = reasoning?.verdict ?? (verification.passed ? 'approved' : 'rejected');
 
@@ -110,6 +121,7 @@ async function persistStatementPipelineResult(
           extraction.transactions.map((tx) => ({
             user_id: userId,
             statement_id: statementId,
+            bank_id: bankId,
             transaction_date: tx.date,
             amount: tx.amount,
             currency: 'TND',
@@ -163,19 +175,24 @@ export async function uploadAndProcessStatement(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
-): Promise<{ id: string; status: 'processing' | 'duplicate' }> {
+  opts: { bankSlug?: string | null } = {},
+): Promise<{ id: string; status: 'processing' | 'duplicate'; bankId: string | null }> {
   const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
   const { data: existing } = await supabaseAdmin
     .from('bank_statements')
-    .select('id')
+    .select('id, bank_id')
     .eq('user_id', userId)
     .eq('file_hash', fileHash)
     .maybeSingle();
 
   if (existing) {
     logger.info({ userId, statementId: existing.id }, 'statement already uploaded, skipping');
-    return { id: existing.id, status: 'duplicate' };
+    return {
+      id: existing.id,
+      status: 'duplicate',
+      bankId: (existing.bank_id as string | null) ?? null,
+    };
   }
 
   const ext = mimeToExt(mimeType);
@@ -187,10 +204,18 @@ export async function uploadAndProcessStatement(
 
   if (storageErr) throw new Error(`Storage upload failed: ${storageErr.message}`);
 
+  // Resolve which bank this statement belongs to so the per-bank dashboard
+  // can scope it. Falls back to null if we genuinely don't know.
+  const bankId = await resolveBankIdForUpload(userId, {
+    slug: opts.bankSlug ?? null,
+    fileName,
+  });
+
   const { data: row, error: insertErr } = await supabaseAdmin
     .from('bank_statements')
     .insert({
       user_id: userId,
+      bank_id: bankId,
       file_name: fileName,
       mime_type: mimeType,
       storage_path: storageKey,
@@ -204,7 +229,7 @@ export async function uploadAndProcessStatement(
 
   void runPipeline(userId, row.id, storageKey, mimeType, fileBuffer);
 
-  return { id: row.id, status: 'processing' };
+  return { id: row.id, status: 'processing', bankId };
 }
 
 export async function runPipeline(

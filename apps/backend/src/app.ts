@@ -15,6 +15,10 @@ import { scoreRouter } from './routes/score.routes';
 import { chatRouter } from './routes/chat.routes';
 import { documentsRouter } from './routes/documents.routes';
 import { bankRouter } from './routes/bank.routes';
+import { bankPublicRouter } from './routes/bank.public.routes';
+import { banksRouter } from './routes/banks.routes';
+import { v1BankRouter } from './routes/v1.bank.routes';
+import { meRouter } from './routes/me.routes';
 import { transactionsRouter } from './routes/transactions.routes';
 
 export function createApp(): Express {
@@ -53,7 +57,11 @@ export function createApp(): Express {
   app.use('/api/score', scoreRouter);
   app.use('/api/chat', chatRouter);
   app.use('/api/documents', documentsRouter);
+  app.use('/api/banks', banksRouter);
+  app.use('/api/bank', bankPublicRouter);
   app.use('/api/bank', bankRouter);
+  app.use('/api/v1/bank', v1BankRouter);
+  app.use('/api/me', meRouter);
   app.use('/api/transactions', transactionsRouter);
 
   app.use((_req, res) => {

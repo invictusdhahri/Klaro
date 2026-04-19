@@ -117,6 +117,7 @@ export type Database = {
       bank_connections: {
         Row: {
           account_count: number
+          bank_id: string | null
           bank_name: string
           connection_method: string
           created_at: string
@@ -127,6 +128,7 @@ export type Database = {
         }
         Insert: {
           account_count?: number
+          bank_id?: string | null
           bank_name: string
           connection_method: string
           created_at?: string
@@ -137,6 +139,7 @@ export type Database = {
         }
         Update: {
           account_count?: number
+          bank_id?: string | null
           bank_name?: string
           connection_method?: string
           created_at?: string
@@ -147,10 +150,73 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "bank_connections_bank_id_fkey"
+            columns: ["bank_id"]
+            isOneToOne: false
+            referencedRelation: "banks"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "bank_connections_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      banks: {
+        Row: {
+          country: string
+          created_at: string
+          id: string
+          logo_url: string | null
+          name: string
+          slug: string
+        }
+        Insert: {
+          country?: string
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name: string
+          slug: string
+        }
+        Update: {
+          country?: string
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name?: string
+          slug?: string
+        }
+        Relationships: []
+      }
+      bank_users: {
+        Row: {
+          bank_id: string
+          created_at: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          bank_id: string
+          created_at?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          bank_id?: string
+          created_at?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_users_bank_id_fkey"
+            columns: ["bank_id"]
+            isOneToOne: false
+            referencedRelation: "banks"
             referencedColumns: ["id"]
           },
         ]
@@ -185,6 +251,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "bank_consents_bank_id_fkey"
+            columns: ["bank_id"]
+            isOneToOne: false
+            referencedRelation: "banks"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "bank_consents_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -196,6 +269,7 @@ export type Database = {
       bank_statements: {
         Row: {
           anomaly_report: Json
+          bank_id: string | null
           clarification_answers: Json
           clarification_questions: Json
           coherence_score: number | null
@@ -216,6 +290,7 @@ export type Database = {
         }
         Insert: {
           anomaly_report?: Json
+          bank_id?: string | null
           clarification_answers?: Json
           clarification_questions?: Json
           coherence_score?: number | null
@@ -236,6 +311,7 @@ export type Database = {
         }
         Update: {
           anomaly_report?: Json
+          bank_id?: string | null
           clarification_answers?: Json
           clarification_questions?: Json
           coherence_score?: number | null
@@ -255,6 +331,13 @@ export type Database = {
           verification_report?: Json
         }
         Relationships: [
+          {
+            foreignKeyName: "bank_statements_bank_id_fkey"
+            columns: ["bank_id"]
+            isOneToOne: false
+            referencedRelation: "banks"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "bank_statements_user_id_fkey"
             columns: ["user_id"]
@@ -514,6 +597,7 @@ export type Database = {
         Row: {
           amount: number
           bank_connection_id: string | null
+          bank_id: string | null
           category: string | null
           counterparty: string | null
           created_at: string
@@ -529,6 +613,7 @@ export type Database = {
         Insert: {
           amount: number
           bank_connection_id?: string | null
+          bank_id?: string | null
           category?: string | null
           counterparty?: string | null
           created_at?: string
@@ -544,6 +629,7 @@ export type Database = {
         Update: {
           amount?: number
           bank_connection_id?: string | null
+          bank_id?: string | null
           category?: string | null
           counterparty?: string | null
           created_at?: string
@@ -562,6 +648,13 @@ export type Database = {
             columns: ["bank_connection_id"]
             isOneToOne: false
             referencedRelation: "bank_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_bank_id_fkey"
+            columns: ["bank_id"]
+            isOneToOne: false
+            referencedRelation: "banks"
             referencedColumns: ["id"]
           },
           {
@@ -630,6 +723,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      current_bank_id: {
+        Args: never
+        Returns: string | null
+      }
       current_user_role: {
         Args: never
         Returns: Database["public"]["Enums"]["app_role"]
@@ -645,6 +742,10 @@ export type Database = {
           score_band: string
           user_id: string
         }[]
+      }
+      get_bank_dashboard_stats: {
+        Args: { p_bank_id: string }
+        Returns: Json
       }
       has_role: {
         Args: { target: Database["public"]["Enums"]["app_role"] }

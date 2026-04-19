@@ -14,12 +14,12 @@ import {
 import { cn } from '@klaro/ui/cn';
 
 const items = [
-  { href: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/kyc',          icon: IdCard,          label: 'Identity' },
-  { href: '/connect-bank', icon: Landmark,        label: 'Bank' },
-  { href: '/transactions', icon: Receipt,         label: 'Transactions' },
-  { href: '/documents',    icon: FileText,        label: 'Documents' },
-  { href: '/chat',         icon: Sparkles,        label: 'Advisor' },
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/kyc', icon: IdCard, label: 'Identity' },
+  { href: '/connect-bank', icon: Landmark, label: 'Bank' },
+  { href: '/transactions', icon: Receipt, label: 'Transactions' },
+  { href: '/documents', icon: FileText, label: 'Documents' },
+  { href: '/chat', icon: Sparkles, label: 'Advisor' },
 ];
 
 export function Sidebar() {

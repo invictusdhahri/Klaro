@@ -1,5 +1,11 @@
 import { env } from '../config/env';
 
+/** Join ML base URL with an API path (paths always start with `/`). */
+function mlUrl(path: string): string {
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return `${env.ML_BASE_URL}${p}`;
+}
+
 export interface MLScoreAction {
   id: string;
   title: string;
@@ -73,7 +79,7 @@ export interface FaceMatchResult {
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${env.ML_BASE_URL}${path}`, {
+  const res = await fetch(mlUrl(path), {
     method: body === undefined ? 'GET' : 'POST',
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -299,7 +305,7 @@ export interface UserContext {
 }
 
 async function callMultipart<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${env.ML_BASE_URL}${path}`, {
+  const res = await fetch(mlUrl(path), {
     method: 'POST',
     body: form,
   });

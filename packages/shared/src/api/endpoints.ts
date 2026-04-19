@@ -45,12 +45,48 @@ export const API_ENDPOINTS = {
     answer: (id: string) => `/api/documents/${id}/answer`,
   },
 
+  banks: {
+    list: '/api/banks',
+  },
+
   bank: {
+    register: '/api/bank/register',
+    me: '/api/bank/me',
+    updateMe: '/api/bank/me',
+    dashboardStats: '/api/bank/dashboard/stats',
     clients: '/api/bank/clients',
     client: (id: string) => `/api/bank/clients/${id}`,
     clientScore: (id: string) => `/api/bank/clients/${id}/score`,
+    clientStatements: (id: string) => `/api/bank/clients/${id}/statements`,
+    clientTransactions: (id: string) => `/api/bank/clients/${id}/transactions`,
+    clientTimeline: (id: string) => `/api/bank/clients/${id}/timeline`,
+    clientInsights: (id: string) => `/api/bank/clients/${id}/insights`,
     requestConsent: (id: string) => `/api/bank/clients/${id}/request-consent`,
-    consent: '/api/bank/consent',
+    apiKeys: '/api/bank/api-keys',
+    apiKey: (id: string) => `/api/bank/api-keys/${id}`,
+    /**
+     * @deprecated User-side endpoint moved to `/api/me/bank-consent`.
+     * Kept for backwards compatibility — new code should use `me.bankConsent`.
+     */
+    consent: '/api/me/bank-consent',
+  },
+
+  /**
+   * Public, programmatic API exposed to banks. Authenticated by an
+   * `X-API-Key` header (NOT a Supabase JWT). Strictly scoped to the bank
+   * that owns the key.
+   */
+  v1Bank: {
+    me: '/api/v1/bank/me',
+    clients: '/api/v1/bank/clients',
+    client: (id: string) => `/api/v1/bank/clients/${id}`,
+    clientScore: (id: string) => `/api/v1/bank/clients/${id}/score`,
+    clientTransactions: (id: string) => `/api/v1/bank/clients/${id}/transactions`,
+    clientStatements: (id: string) => `/api/v1/bank/clients/${id}/statements`,
+  },
+
+  me: {
+    bankConsent: '/api/me/bank-consent',
   },
 
   transactions: {

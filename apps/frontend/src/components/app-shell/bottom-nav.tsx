@@ -13,11 +13,11 @@ import {
 import { cn } from '@klaro/ui/cn';
 
 const items = [
-  { href: '/dashboard',    icon: LayoutDashboard, label: 'Home' },
-  { href: '/kyc',          icon: IdCard,          label: 'ID' },
-  { href: '/connect-bank', icon: Landmark,        label: 'Bank' },
-  { href: '/documents',    icon: FileText,        label: 'Docs' },
-  { href: '/chat',         icon: Sparkles,        label: 'Advisor' },
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Home' },
+  { href: '/kyc', icon: IdCard, label: 'ID' },
+  { href: '/connect-bank', icon: Landmark, label: 'Bank' },
+  { href: '/documents', icon: FileText, label: 'Docs' },
+  { href: '/chat', icon: Sparkles, label: 'Advisor' },
 ];
 
 export function BottomNav() {

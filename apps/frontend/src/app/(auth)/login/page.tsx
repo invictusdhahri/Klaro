@@ -128,6 +128,23 @@ export default function LoginPage() {
           Create one
         </Link>
       </div>
+
+      <p className="text-center text-xs text-white/30">
+        Are you a bank?{' '}
+        <Link
+          href="/bank/login"
+          className="text-sky-400/80 hover:text-sky-300 font-medium transition-colors"
+        >
+          Bank portal
+        </Link>
+        {' · '}
+        <Link
+          href="/bank/register"
+          className="text-sky-400/80 hover:text-sky-300 font-medium transition-colors"
+        >
+          Register
+        </Link>
+      </p>
     </motion.div>
   );
 }
