@@ -3,7 +3,6 @@
 import * as React from 'react';
 import { cn } from '@klaro/ui/cn';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -181,10 +180,10 @@ function RedDot() {
 
 // ── Doc type config ───────────────────────────────────────────────────────────
 
-const DOC_TYPES: { value: DocumentType; label: string }[] = [
-  { value: 'cin', label: 'CIN (Carte d\'Identité Nationale)' },
-  { value: 'passport', label: 'Passport' },
-  { value: 'driver_license', label: 'Driver License' },
+const DOC_TYPES: { value: DocumentType; label: string; icon: string; comingSoon?: boolean }[] = [
+  { value: 'cin',            label: 'CIN',            icon: '🪪' },
+  { value: 'passport',       label: 'Passport',       icon: '📘', comingSoon: true },
+  { value: 'driver_license', label: 'Driver License', icon: '🚗', comingSoon: true },
 ];
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -284,22 +283,37 @@ export function IdUploadStep({ onSuccess }: IdUploadStepProps) {
     <div className="space-y-4">
       {/* Document type selector */}
       <div className="space-y-1.5">
-        <label htmlFor="doc-type" className="text-sm font-medium">
-          Document type
-        </label>
-        <select
-          id="doc-type"
-          value={docType}
-          onChange={(e) => handleDocTypeChange(e.target.value as DocumentType)}
-          disabled={isUploading || isSuccess}
-          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {DOC_TYPES.map((d) => (
-            <option key={d.value} value={d.value}>
-              {d.label}
-            </option>
-          ))}
-        </select>
+        <p className="text-sm font-medium">Document type</p>
+        <div className="grid grid-cols-3 gap-2">
+          {DOC_TYPES.map((d) => {
+            const selected = docType === d.value;
+            const disabled = d.comingSoon || isUploading || isSuccess;
+            return (
+              <button
+                key={d.value}
+                type="button"
+                disabled={disabled}
+                onClick={() => !d.comingSoon && handleDocTypeChange(d.value)}
+                className={cn(
+                  'relative flex flex-col items-center gap-1 rounded-xl border-2 px-2 py-3 text-xs font-medium transition-all',
+                  d.comingSoon
+                    ? 'cursor-not-allowed border-border/40 bg-muted/10 opacity-60'
+                    : selected
+                      ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
+                      : 'border-border bg-muted/10 text-muted-foreground hover:border-indigo-500/50 hover:bg-indigo-500/5',
+                )}
+              >
+                <span className="text-xl leading-none">{d.icon}</span>
+                <span>{d.label}</span>
+                {d.comingSoon && (
+                  <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-400 ring-1 ring-amber-500/30">
+                    Coming soon
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Drop zones */}

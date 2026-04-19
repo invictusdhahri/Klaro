@@ -45,11 +45,10 @@ export function PartnerHero() {
               variants={heroItem}
               className="text-[48px] leading-[0.98] sm:text-[64px] lg:text-[80px] xl:text-[92px] font-semibold tracking-[-0.025em] text-white"
             >
-              The credit signal
+              Find your customer&apos;s
               <br />
-              banks have been
-              <br />
-              <span className="mono italic accent-text font-normal">missing.</span>
+              
+              <span className="mono italic accent-text font-normal">needs</span>
             </motion.h1>
 
             <motion.p

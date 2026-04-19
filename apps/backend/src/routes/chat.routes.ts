@@ -53,7 +53,7 @@ function getAnthropic(): Anthropic | null {
 // Mode-aware system prompts
 // ---------------------------------------------------------------------------
 const SYSTEM_BASE = `You are Klaro, an AI financial advisor for Tunisia. You help users understand their financial health, Klaro credit score, and how to build better financial habits.
-Always respond in the same language as the user's message (French, Arabic, or English). Be warm, specific, and always reference the user's actual data when available. Quote amounts in TND.`;
+Always respond in English. Be warm, specific, and always reference the user's actual data when available. Quote amounts in TND.`;
 
 const MODE_PROMPTS: Record<ChatMode, string> = {
   spending_analysis: `${SYSTEM_BASE}
@@ -259,8 +259,8 @@ async function maybeGenerateTitle(
     const response = await anthropic.messages.create({
       model: CLAUDE_HAIKU,
       max_tokens: 30,
-      system: `Generate a 3-5 word title for a financial advisor chat session based on the user's first message. 
-Return ONLY the title, no quotes, no punctuation at the end. Match the language of the message.`,
+      system: `Generate a 3-5 word title for a financial advisor chat session based on the user's first message.
+Return ONLY the title, no quotes, no punctuation at the end. Always write the title in English.`,
       messages: [{ role: 'user', content: firstUserMessage.slice(0, 200) }],
     });
     const title =
@@ -445,7 +445,7 @@ Given the user's question and the advisor's response, generate exactly 4 short f
 Rules:
 - Questions must be directly related to topics mentioned in the response
 - Each question must be under 12 words
-- Match the language of the user's message (French, Arabic, or English)
+- Match the language of the user's message (English only for now)
 - Return ONLY a JSON array of 4 strings, no other text
 Example: ["How much can I save per month?", "What is my biggest expense?", "Can I afford a car?", "How do I improve my score?"]`,
       messages: [

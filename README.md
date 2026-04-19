@@ -17,15 +17,15 @@ Klaro/
 ├── apps/
 │   ├── frontend/       Next.js 15 (App Router) — user app + bank dashboard
 │   ├── backend/        Express.js + TypeScript API
-│   └── ml/             FastAPI Python sidecar (KYC + 3-layer credit scoring)
+│   └── ml/             FastAPI Python sidecar (KYC + 4-layer credit scoring)
 ├── packages/
 │   ├── shared/         TS types, Zod schemas, API client, constants
 │   ├── ui/             Tiny shared UI helpers (cn, etc.)
 │   ├── eslint-config/  Shared ESLint presets
 │   └── tsconfig/       Shared tsconfig presets
-├── supabase/           Supabase CLI config + SQL migrations
+├── supabase/           Supabase CLI config + SQL migrations (0001–0013)
 ├── infra/docker/       Production Dockerfiles (backend, frontend, ml, scraper)
-├── internal_docs/      Architecture & security source-of-truth docs
+├── docs/               Feature branch summaries and design decisions
 ├── docker-compose.yml  Local dev orchestration for backend + ml
 ├── ARCHITECTURE.md     Web-first architecture, diagrams, request flows
 └── turbo.json          Turborepo pipeline
@@ -71,8 +71,8 @@ cd apps/ml && uv sync --extra dev && cd -
 # 6. Run everything in parallel
 pnpm dev
 # - apps/frontend → http://localhost:3000
-# - apps/backend → http://localhost:4000
-# - apps/ml      → http://localhost:8000
+# - apps/backend  → http://localhost:4000
+# - apps/ml       → http://localhost:8000
 ```
 
 Supabase Studio (local): <http://127.0.0.1:54323>
@@ -131,14 +131,14 @@ Root scripts (run with `pnpm <script>`):
 
 ## App entry points
 
-| Surface                | Path                                       |
-| ---------------------- | ------------------------------------------ |
-| Marketing              | `/`                                        |
-| Auth                   | `/login`, `/register`, `/bank/register`    |
+| Surface                | Path                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| Marketing              | `/`                                                                           |
+| Auth                   | `/login`, `/register`, `/bank/register`                                       |
 | User app               | `/dashboard`, `/kyc`, `/connect-bank`, `/transactions`, `/documents`, `/chat` |
-| Bank operator console  | `/bank`, `/bank/clients`, `/bank/clients/[id]` |
-| API health             | `GET http://localhost:4000/health`         |
-| ML health              | `GET http://localhost:8000/health`         |
+| Bank operator console  | `/bank`, `/bank/clients`, `/bank/clients/[id]`                                |
+| API health             | `GET http://localhost:4000/health`                                            |
+| ML health              | `GET http://localhost:8000/health`                                            |
 
 Bank dashboard is gated by `app_metadata.role = 'bank'` plus a non-null `app_metadata.bank_id`. Both fields are populated automatically by the `POST /api/bank/register` flow described above.
 
@@ -148,24 +148,88 @@ Bank dashboard is gated by `app_metadata.role = 'bank'` plus a non-null `app_met
 
 See [`.env.example`](.env.example) for the full list. The most important:
 
-| Variable                              | Used by         | Notes                                       |
-| ------------------------------------- | --------------- | ------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`            | frontend, backend | Public                                      |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY`       | frontend          | Public                                      |
-| `SUPABASE_SERVICE_ROLE_KEY`           | backend           | **Server-only.** Never expose to browser.   |
-| `ANTHROPIC_API_KEY`                   | backend, ml       | Required for chat + LLM scoring             |
-| `ML_BASE_URL`                         | backend           | URL of the FastAPI sidecar                  |
-| `NEXT_PUBLIC_API_BASE_URL`            | frontend          | URL of the Express backend                  |
-| `CREDENTIAL_ENCRYPTION_PUBLIC_KEY`    | frontend (shipped) | RSA-OAEP public key for bank credentials    |
-| `CREDENTIAL_ENCRYPTION_PRIVATE_KEY`   | backend (server) | Decrypts the envelope; **never** logged     |
+| Variable                              | Used by            | Notes                                        |
+| ------------------------------------- | ------------------ | -------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`            | frontend, backend  | Public                                       |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`       | frontend           | Public                                       |
+| `SUPABASE_SERVICE_ROLE_KEY`           | backend            | **Server-only.** Never expose to browser.    |
+| `ANTHROPIC_API_KEY`                   | backend, ml        | Required for chat + LLM scoring              |
+| `ML_BASE_URL`                         | backend            | URL of the FastAPI sidecar                   |
+| `NEXT_PUBLIC_API_BASE_URL`            | frontend           | URL of the Express backend                   |
+| `CREDENTIAL_ENCRYPTION_PUBLIC_KEY`    | frontend (shipped) | RSA-OAEP public key for bank credentials     |
+| `CREDENTIAL_ENCRYPTION_PRIVATE_KEY`   | backend (server)   | Decrypts the envelope; **never** logged      |
 
 ---
 
-## Documentation
+## Internal documentation
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — web-first system architecture, diagrams, request flows
-- [`internal_docs/06_Updated_Architecture_TechStack.md`](internal_docs/06_Updated_Architecture_TechStack.md) — original technical architecture (includes deprecated React Native sections, kept for reference)
-- [`internal_docs/05_Security_Vulnerability_Audit.md`](internal_docs/05_Security_Vulnerability_Audit.md) — threat model and mitigations
+These documents are the canonical source of truth for the project's design decisions. Read them before touching core subsystems.
+
+| Document | What it covers |
+| -------- | -------------- |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Full system architecture — monorepo layout, request flows (Mermaid diagrams), middleware stack, AI model routing table, Supabase schema overview, security checkpoints. **Start here.** |
+| [`docs/branch-feature-deepfake.md`](docs/branch-feature-deepfake.md) | Everything added in `feature/deepfake`: document forensics pipeline (ELA, FFT, vision ensemble), Layer 4 reasoner with clarification Q&A, chat sessions + long-term memory, score action UX, and the migrations (`0007`–`0010`) that wire it all together. Read before touching `apps/ml/statements/`, `apps/backend/routes/chat.routes.ts`, or the score dashboard components. |
+
+### Where things live
+
+A quick map for contributors who need to find something fast:
+
+**Credit scoring pipeline** — `apps/ml/src/klaro_ml/scoring/`
+- `compose.py` — assembles Layers 1–4 into a single score response
+- `rule_scorecard.py` — Layer 1 deterministic rules
+- `anomaly_detector.py` — Layer 2 IsolationForest (`--extra ml` required)
+- `llm_scorer.py` — Layer 3 Claude Sonnet coaching + rubric
+- `context_builder.py` — user context assembly (profile, transactions, KYC status, bank connections)
+- `impact_estimator.py` — calculates expected score change for each recommended action
+
+**Statement verification pipeline** — `apps/ml/src/klaro_ml/statements/`
+- `deepfake.py` — orchestrates all forensic passes on uploaded PDFs
+- `forensics/pdf_structure.py` — PDF metadata and object tree analysis
+- `forensics/image_forensics.py` — ELA, FFT noise, JPEG ghost detection
+- `forensics/rule_engine.py` — deterministic fraud-signal rules
+- `forensics/vision_ensemble.py` — multi-model vision classification
+- `consistency.py` — cross-field and temporal consistency checks
+- `income_plausibility.py` — income vs. Tunisian salary-band validation (`data/salary_bands_tn.py`)
+- `authenticity.py` — overall authenticity scoring
+- `reasoner.py` — Layer 4 rubric-weighted verdict (`approved` / `needs_review` / `rejected`), narrative reasoning, per-flag explanations, clarification questions; LLM score is clamped so it cannot override deterministic critical signals
+- `extractor.py` — structured field extraction from raw OCR output
+
+**KYC pipeline** — `apps/ml/src/klaro_ml/kyc/`
+- `liveness.py` / `vision_liveness.py` — MediaPipe-based liveness detection
+- `face.py` / `face_detect.py` — AdaFace stubs for face matching
+- `ocr.py` / `vision_extractor.py` — document OCR via PaddleOCR
+- `haiku_parser.py` — structured field extraction with Claude Haiku
+
+**Bank scraping** — `apps/backend/src/services/scraping/`
+- `orchestrator.ts` — spawns and manages ephemeral Playwright workers, one container per session
+- `adapters/` — per-bank Playwright scrapers: `attijari.ts`, `biat.ts`, `stb.ts`, `ubci.ts` (plus `base.ts` for shared logic)
+
+**Chat & memory** — `apps/backend/src/routes/chat.routes.ts`
+- Session management (create, list, title), `session_id`-scoped message persistence, stale-session summarization, `user_memories` extraction and injection into the advisor system prompt. Full design in [`docs/branch-feature-deepfake.md`](docs/branch-feature-deepfake.md).
+
+**Shared contract** — `packages/shared/src/`
+- `api/endpoints.ts` — single source of truth for all API paths (import, don't hardcode)
+- `schemas/` — Zod schemas for every request/response body; validated on both client and server
+- `types/` — TypeScript interfaces derived from schemas + `database.generated.ts` (auto-generated; do not hand-edit)
+- `constants/ai-models.ts` — model map mirrored in `apps/ml/src/klaro_ml/settings.py`
+
+**Database** — `supabase/migrations/`
+
+| Migration | What it adds |
+| --------- | ------------ |
+| `0001_init.sql` | `profiles`, `kyc_documents`, `bank_connections`, `transactions`, `credit_scores`, `anomaly_flags`, `bank_consents`, `chat_messages`, `audit_logs`; auto profile trigger; `updated_at` trigger |
+| `0002_storage.sql` | Private buckets `kyc-docs`, `bank-statements`, `selfies` with owner-scoped RLS policies |
+| `0003_roles.sql` | `app_role` enum, `current_user_role()`, `has_role()`, bank-visibility policies gated by `bank_consents` |
+| `0004_score_band_generated.sql` | Generated `score_band` column on `credit_scores` |
+| `0005_bank_portal.sql` | Bank portal support tables |
+| `0006_bank_statements.sql` | `bank_statements` table for uploaded PDF/CSV/Excel files |
+| `0007_statement_review.sql` | Extends `bank_statements` with `reasoning`, `clarification_questions`, `clarification_answers`, `risk_score`, `income_assessment`, `needs_review` status |
+| `0008_transactions_statement_id.sql` | Nullable `statement_id` FK on `transactions` tying OCR rows to their source statement |
+| `0009_chat_sessions_and_memory.sql` | `chat_sessions`, `session_id` on `chat_messages` (with legacy backfill), `user_memories` for extracted facts |
+| `0010_profile_context.sql` | `profiles.profile_context` JSONB for persisting enrichment from clarification answers |
+| `0011_banks.sql` | `banks` table for multi-tenant bank registration |
+| `0012_bank_dashboard.sql` | Dashboard views and aggregates for bank operators |
+| `0013_bank_api_keys.sql` | API key management for bank-to-bank integrations |
 
 ---
 
@@ -173,7 +237,7 @@ See [`.env.example`](.env.example) for the full list. The most important:
 
 - **Frontend**: Vercel (recommended) or Cloud Run.
 - **Backend**: Fly.io / Railway / Render. Needs the service-role key in a secret store and the credential-decryption private key mounted at runtime.
-- **ML**: Cloud Run (GPU optional). Build the full image with KYC extras enabled (`uv sync --extra ml --extra kyc`).
+- **ML**: Cloud Run (GPU optional). Build the full image with KYC + ML extras enabled (`uv sync --extra ml --extra kyc`).
 - **Database**: Supabase managed Postgres.
 - **Scraper workers**: Run as ephemeral Cloud Run Jobs / Fly Machines triggered by the backend. Never reuse a container across users.
 
