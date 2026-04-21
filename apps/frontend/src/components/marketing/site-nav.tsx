@@ -78,7 +78,7 @@ export function SiteNav() {
           {navLinks.map((link) => {
             const active =
               link.href === pathname ||
-              (link.href === '/partners' && pathname?.startsWith('/partners') && link.href !== '/partners#api');
+              (link.href === '/partners' && pathname === '/partners');
             return (
               <Link
                 key={link.href}

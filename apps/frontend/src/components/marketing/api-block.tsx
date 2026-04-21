@@ -213,9 +213,11 @@ export function ApiBlock() {
       </div>
 
       <div key={active} className="animate-fade-in">
-        <Terminal title={endpoint.terminalTitle}>
-          {endpoint.content}
-        </Terminal>
+        {endpoint && (
+          <Terminal title={endpoint.terminalTitle}>
+            {endpoint.content}
+          </Terminal>
+        )}
       </div>
     </div>
   );
