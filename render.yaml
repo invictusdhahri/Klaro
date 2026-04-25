@@ -16,8 +16,10 @@ services:
     runtime: node
     plan: starter
     region: oregon  # Change to your preferred region: oregon, frankfurt, singapore, etc.
-    buildCommand: cd apps/backend && npm install && npm run build
-    startCommand: cd apps/backend && npm start
+    # Monorepo uses pnpm workspaces; npm in apps/backend cannot resolve `workspace:*`
+    # NODE_ENV=development for install so devDependencies (e.g. tsup) are present if Render uses production in the build env
+    buildCommand: corepack enable && corepack prepare pnpm@9.12.3 --activate && env NODE_ENV=development pnpm install --frozen-lockfile && pnpm --filter @klaro/backend run build
+    startCommand: pnpm --filter @klaro/backend start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

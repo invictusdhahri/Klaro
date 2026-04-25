@@ -233,13 +233,73 @@ A quick map for contributors who need to find something fast:
 
 ---
 
-## Deployment (TODO)
+## Deployment
 
-- **Frontend**: Vercel (recommended) or Cloud Run.
-- **Backend**: Fly.io / Railway / Render. Needs the service-role key in a secret store and the credential-decryption private key mounted at runtime.
-- **ML**: Cloud Run (GPU optional). Build the full image with KYC + ML extras enabled (`uv sync --extra ml --extra kyc`).
-- **Database**: Supabase managed Postgres.
-- **Scraper workers**: Run as ephemeral Cloud Run Jobs / Fly Machines triggered by the backend. Never reuse a container across users.
+### Render (Recommended for Quick Start)
+
+The repository includes a `render.yaml` Blueprint for one-click deployment:
+
+1. **Push your code to GitHub**
+
+2. **Go to [Render Dashboard](https://dashboard.render.com)**
+
+3. **Click "Blueprints" → "New Blueprint Instance"**
+
+4. **Connect your repository** — Render will detect `render.yaml` and create two services:
+   - `klaro-backend` — Node.js/Express API (public Web Service)
+   - `klaro-ml` — Python/FastAPI ML sidecar (Private Service)
+
+5. **Set environment variables** in the Render dashboard for both services:
+
+   | Variable | Backend | ML | Source |
+   |----------|---------|-----|--------|
+   | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | ✅ | Supabase Project Settings |
+   | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | ✅ | Supabase Project Settings |
+   | `ANTHROPIC_API_KEY` | ✅ | ✅ | [Anthropic Console](https://console.anthropic.com) |
+   | `TAVILY_API_KEY` | - | ✅ (optional) | [Tavily](https://tavily.com) |
+   | `CREDENTIAL_ENCRYPTION_PUBLIC_KEY` | ✅ | - | Generate locally (see below) |
+   | `CREDENTIAL_ENCRYPTION_PRIVATE_KEY` | ✅ | - | Generate locally (see below) |
+   | `CORS_ORIGINS` | ✅ | - | Your frontend URL(s) |
+
+6. **Generate RSA keys for credential encryption** (run locally):
+   ```bash
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out private.pem
+   openssl pkey -in private.pem -pubout -out public.pem
+   # Base64-encode for env vars (no newlines)
+   base64 -i private.pem | tr -d '\n'  # → CREDENTIAL_ENCRYPTION_PRIVATE_KEY
+   base64 -i public.pem | tr -d '\n'  # → CREDENTIAL_ENCRYPTION_PUBLIC_KEY
+   ```
+
+7. **Deploy the frontend** (Vercel recommended):
+   ```bash
+   cd apps/frontend
+   vercel
+   ```
+   Set `NEXT_PUBLIC_API_BASE_URL` to your Render backend URL.
+
+### Manual Render Setup (without Blueprint)
+
+If you prefer manual service creation:
+
+**Backend Service:**
+- **Runtime:** Node
+- **Build Command:** `corepack enable && corepack prepare pnpm@9.12.3 --activate && env NODE_ENV=development pnpm install --frozen-lockfile && pnpm --filter @klaro/backend run build`
+- **Start Command:** `pnpm --filter @klaro/backend start`
+- **Environment Variables:** Set `ML_BASE_URL=http://klaro-ml:8000` (internal Render URL)
+
+**ML Service:**
+- **Runtime:** Python 3.11
+- **Build Command:** `cd apps/ml && pip install -e ".[ml,kyc,statements]"`
+- **Start Command:** `cd apps/ml && uvicorn klaro_ml.main:app --host 0.0.0.0 --port 8000`
+- **Type:** Private Service
+
+### Alternative Platforms
+
+- **Frontend**: Vercel (recommended) or Cloudflare Pages
+- **Backend**: Fly.io, Railway, or AWS ECS
+- **ML**: Cloud Run (GPU optional for heavy inference)
+- **Database**: Supabase managed Postgres (already required)
+- **Scraper workers**: Run as ephemeral jobs (Cloud Run Jobs / Fly Machines). Never reuse containers across users.
 
 ---
 

@@ -139,13 +139,13 @@ If you prefer creating services manually:
 
 1. **New Web Service**
 2. **Runtime:** Node
-3. **Build Command:**
+3. **Build Command:** (use **repo root** as working directory; the monorepo needs pnpm, not `npm` in `apps/backend` alone, because of `workspace:*` packages)
    ```bash
-   cd apps/backend && npm install && npm run build
+   corepack enable && corepack prepare pnpm@9.12.3 --activate && env NODE_ENV=development pnpm install --frozen-lockfile && pnpm --filter @klaro/backend run build
    ```
 4. **Start Command:**
    ```bash
-   cd apps/backend && npm start
+   pnpm --filter @klaro/backend start
    ```
 5. **Environment Variables:**
    - `NODE_ENV=production`

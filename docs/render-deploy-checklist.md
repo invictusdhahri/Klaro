@@ -88,7 +88,7 @@ curl https://klaro-backend-xxx.onrender.com/health
 
 | Issue | Solution |
 |-------|----------|
-| Build fails | Check `render.yaml` syntax; verify `package.json` exists in `apps/backend` |
+| Build fails | Check `render.yaml` syntax; backend must build with **pnpm from repo root** (not `npm` in `apps/backend` — `workspace:*` needs the monorepo install) |
 | ML service OOM | Upgrade to Starter plan (512MB) or reduce dependencies |
 | Cold starts | Normal on free tier; upgrade or add cron job to keep warm |
 | Backend can't reach ML | Verify `ML_BASE_URL` is auto-set; check both services in same region |
