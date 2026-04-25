@@ -1,0 +1,74 @@
+# Render Blueprint for Klaro
+# Deploys backend API and ML sidecar services
+#
+# Usage:
+# 1. Push this file to your GitHub repo
+# 2. Go to https://dashboard.render.com/blueprints
+# 3. Click "New Blueprint Instance" and connect your repo
+# 4. Render will create both services automatically
+# 5. Add environment variables in the Render dashboard (see docs/deployment-render.md)
+
+services:
+  # Backend API Service (Node.js/Express)
+  # Public-facing API that handles auth, chat, bank connections, etc.
+  - type: web
+    name: klaro-backend
+    runtime: node
+    plan: starter
+    region: oregon  # Change to your preferred region: oregon, frankfurt, singapore, etc.
+    buildCommand: cd apps/backend && npm install && npm run build
+    startCommand: cd apps/backend && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: LOG_LEVEL
+        value: info
+      # Internal URL for ML service (auto-populated by Render)
+      - key: ML_BASE_URL
+        fromService:
+          type: pserv
+          name: klaro-ml
+          property: hostport  # Results in http://klaro-ml:8000
+      # Set these manually in Render dashboard after deployment
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CREDENTIAL_ENCRYPTION_PUBLIC_KEY
+        sync: false
+      - key: CREDENTIAL_ENCRYPTION_PRIVATE_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  # ML Sidecar Service (Python/FastAPI) - Private Service
+  # Internal-only service for credit scoring, KYC, OCR, and document analysis
+  # Not accessible from the internet, only from klaro-backend
+  - type: pserv
+    name: klaro-ml
+    runtime: python
+    plan: starter
+    region: oregon  # Should match backend region for low latency
+    buildCommand: cd apps/ml && pip install -e ".[ml,kyc,statements]"
+    startCommand: cd apps/ml && uvicorn klaro_ml.main:app --host 0.0.0.0 --port 8000
+    envVars:
+      - key: ML_ENV
+        value: production
+      - key: ML_PORT
+        value: 8000
+      - key: LOG_LEVEL
+        value: INFO
+      # Set these manually in Render dashboard after deployment
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false

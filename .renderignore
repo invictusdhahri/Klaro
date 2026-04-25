@@ -1,0 +1,50 @@
+# Files and directories to ignore during Render builds
+# Similar to .gitignore but specific to Render
+
+# Node.js
+node_modules
+.pnpm-store
+.turbo
+*.log
+npm-debug.log*
+.npm
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv
+venv/
+
+# Testing
+coverage/
+*.lcov
+.nyc_output
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large files not needed for deployment
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Documentation that's not needed at runtime
+docs/*.md
+!docs/*.sql
+*.md
+!README.md
