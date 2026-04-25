@@ -27,7 +27,9 @@ export function createApp(): Express {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
 
-  app.use(helmet());
+  // Default CORP is "same-origin", which blocks cross-origin fetches to this API
+  // (e.g. Vercel → Render) even when CORS allows the origin. Use cross-origin.
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(
     cors({
       origin: (origin, cb) => {

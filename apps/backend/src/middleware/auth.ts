@@ -2,6 +2,13 @@ import type { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../services/supabase';
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  // Browsers do not send Authorization on CORS preflight (OPTIONS). If disallowed
+  // origin caused cors to call `next()` without ending the response, we must not
+  // return 401 here or the preflight will fail with a misleading 401.
+  if (req.method === 'OPTIONS') {
+    next();
+    return;
+  }
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'unauthorized', message: 'Missing bearer token' });
@@ -30,6 +37,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
 export function requireRole(...roles: Array<'user' | 'bank' | 'admin'>) {
   return (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'OPTIONS') {
+      next();
+      return;
+    }
     if (!req.user) {
       res.status(401).json({ error: 'unauthorized' });
       return;
@@ -47,6 +58,10 @@ export function requireRole(...roles: Array<'user' | 'bank' | 'admin'>) {
  * Use this on every /api/bank/* route that scopes data by bank organisation.
  */
 export function requireBank(req: Request, res: Response, next: NextFunction) {
+  if (req.method === 'OPTIONS') {
+    next();
+    return;
+  }
   if (!req.user) {
     res.status(401).json({ error: 'unauthorized' });
     return;

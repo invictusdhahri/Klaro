@@ -82,6 +82,10 @@ export async function requireBankApiKey(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
+  if (req.method === 'OPTIONS') {
+    next();
+    return;
+  }
   const headerRaw = req.headers['x-api-key'];
   const headerValue = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
 
