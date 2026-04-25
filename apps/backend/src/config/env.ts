@@ -21,11 +21,23 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(10),
 
   ANTHROPIC_API_KEY: z.string().min(10).optional(),
-  ML_BASE_URL: z
-    .string()
-    .url()
-    .default('http://localhost:8000')
-    .transform((s) => s.replace(/\/+$/, '')),
+  // Render (and other hosts) may set this to "klaro-ml:10000" (host:port) without a
+  // scheme; `fetch` then throws "unknown scheme" because "klaro-ml" is parsed as
+  // the URL scheme. Prepend http:// when missing.
+  ML_BASE_URL: z.preprocess(
+    (val) => {
+      const v =
+        val === undefined || val === null || String(val).trim() === ''
+          ? 'http://localhost:8000'
+          : String(val).trim();
+      const t = v.replace(/\/+$/, '');
+      if (/^https?:\/\//i.test(t)) {
+        return t;
+      }
+      return `http://${t}`;
+    },
+    z.string().url(),
+  ),
 
   CREDENTIAL_ENCRYPTION_PUBLIC_KEY: z.string().optional(),
   CREDENTIAL_ENCRYPTION_PRIVATE_KEY: z.string().optional(),
