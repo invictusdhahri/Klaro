@@ -36,7 +36,10 @@ export function createApp(): Express {
         if (!origin || allowed.includes(normalizedOrigin!)) {
           cb(null, true);
         } else {
-          cb(new Error(`CORS: origin not allowed: ${origin}`));
+          // Reject with (null, false) — not `new Error()`. Passing an Error is treated as
+          // a middleware failure (500) and preflight OPTIONS never get CORS headers.
+          logger.warn({ origin }, 'CORS: origin not in CORS_ORIGINS; add it in production (e.g. your Vercel URL)');
+          cb(null, false);
         }
       },
       credentials: true,
