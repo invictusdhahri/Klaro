@@ -3,6 +3,7 @@ import { requireUser } from '@/lib/auth';
 import { createClient } from '@/lib/supabase/server';
 import { ScoreDashboardClient } from '@/components/score/score-dashboard-client';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -16,6 +17,10 @@ export default async function DashboardPage() {
     .eq('id', user.id)
     .maybeSingle();
   const profile = profileData as { kyc_status: string; full_name: string } | null;
+
+  if (!profile || profile.kyc_status === 'pending') {
+    redirect('/kyc');
+  }
 
   // Check bank connections
   const { count: bankCount } = await supabase

@@ -12,9 +12,6 @@ const PUBLIC_PATHS = [
   '/api/auth/callback',
 ];
 
-// Paths that are part of the onboarding flow — don't gate them
-const ONBOARDING_PATHS = ['/kyc', '/onboarding', '/connect-bank', '/documents'];
-
 const BANK_PREFIX = '/bank';
 
 export async function updateSession(request: NextRequest) {
@@ -64,7 +61,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Authenticated on login/register → redirect to app
+  // Authenticated on login/register → redirect to app (KYC routing runs in RSC, not Edge)
   if (user && (pathname === '/login' || pathname === '/register')) {
     const url = request.nextUrl.clone();
     const role = (user.app_metadata?.role as string | undefined) ?? 'user';
@@ -72,19 +69,7 @@ export async function updateSession(request: NextRequest) {
       url.pathname = '/bank';
       return NextResponse.redirect(url);
     }
-    // Check onboarding progress via profile
-    const { data: profileRaw } = await supabase
-      .from('profiles')
-      .select('kyc_status')
-      .eq('id', user.id)
-      .maybeSingle();
-    const profile = profileRaw as { kyc_status: string } | null;
-
-    if (!profile || profile.kyc_status === 'pending') {
-      url.pathname = '/kyc';
-    } else {
-      url.pathname = '/dashboard';
-    }
+    url.pathname = '/dashboard';
     return NextResponse.redirect(url);
   }
 
@@ -96,28 +81,6 @@ export async function updateSession(request: NextRequest) {
       const url = request.nextUrl.clone();
       url.pathname = '/dashboard';
       return NextResponse.redirect(url);
-    }
-  }
-
-  // Gate /dashboard: if KYC not done, push to /kyc
-  // (skip check for onboarding paths to avoid redirect loops)
-  if (user && pathname === '/dashboard') {
-    const isOnboarding = ONBOARDING_PATHS.some(
-      (p) => pathname === p || pathname.startsWith(p + '/'),
-    );
-    if (!isOnboarding) {
-      const { data: profileRaw2 } = await supabase
-        .from('profiles')
-        .select('kyc_status')
-        .eq('id', user.id)
-        .maybeSingle();
-      const profile2 = profileRaw2 as { kyc_status: string } | null;
-
-      if (!profile2 || profile2.kyc_status === 'pending') {
-        const url = request.nextUrl.clone();
-        url.pathname = '/kyc';
-        return NextResponse.redirect(url);
-      }
     }
   }
 
